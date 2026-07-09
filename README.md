@@ -1,0 +1,339 @@
+# ACM 实验室自助打印平台
+
+Rust + axum + SQLite 后端，Vue 3 前端。项目用于实验室内网自助打印：用户上传文件、预览、提交队列；系统按每日页数限额控制，超额任务进入管理员审核。
+
+后端默认使用模拟打印，方便在开发机验证完整业务流程。部署到实验室 Windows 打印主机时，在 `config.toml` 中把 `printer.simulate` 改为 `false`。
+
+## 环境准备
+
+需要安装：
+
+- Rust stable
+- Node.js 与 npm
+- Windows 生产环境需要 Print Spooler 服务正常运行
+- 如需转换 Word/Excel/PPT，生产环境需要 Microsoft 365 或其他可调用的转换工具
+
+如果当前 PowerShell 找不到 `node` 或 `npm`，但 Node.js 已安装在默认位置，可临时执行：
+
+```powershell
+$env:PATH='C:\Program Files\nodejs;' + $env:PATH
+```
+
+## 配置
+
+主要配置文件是 `config.toml`：
+
+```toml
+database_url = "sqlite://data/print-server.db"
+data_dir = "data"
+initial_admin_student_id = "admin"
+session_days = 365
+queue_poll_seconds = 5
+cleanup_interval_hours = 6
+file_retention_days = 365
+temp_upload_retention_hours = 24
+
+[server]
+bind = "127.0.0.1:8080"
+
+[printer]
+name = "HP LaserJet P1106"
+simulate = true
+command_timeout_seconds = 60
+```
+
+开发时保持 `simulate = true`。真实提交到打印机时改为：
+
+```toml
+[printer]
+name = "HP LaserJet P1106"
+simulate = false
+```
+
+如果要启用 Office COM 转 PDF：
+
+```toml
+[converter]
+office_command = "powershell -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input {input} -Output {output}"
+```
+
+## 构建
+
+### 后端检查与构建
+
+```powershell
+cargo fmt
+cargo check
+cargo build --release
+```
+
+构建产物位于：
+
+```powershell
+target\release\print-server.exe
+```
+
+### 前端依赖与构建
+
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+前端生产产物会生成到 `frontend/dist`。本项目默认让前端服务占用 `80` 端口，后端监听本机 `8080`，前端把 `/api` 请求代理到后端。
+
+## 启动
+
+### 开发模式
+
+启动后端：
+
+```powershell
+cargo run
+```
+
+后端默认监听：
+
+```text
+http://127.0.0.1:8080
+```
+
+另开一个终端启动前端开发服务：
+
+```powershell
+cd frontend
+npm run dev
+```
+
+前端开发服务监听 `80` 端口，并代理 `/api` 到后端 `8080`。浏览器访问：
+
+```text
+http://127.0.0.1/
+```
+
+局域网内其他设备可访问打印主机 IP，例如：
+
+```text
+http://192.168.1.100/
+```
+
+如果 `80` 端口被 Steam++、IIS、Nginx 或其他服务占用，先关闭占用者再启动前端。
+
+### 生产模式
+
+先构建前端和后端：
+
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
+cargo build --release
+```
+
+启动服务：
+
+```powershell
+.\target\release\print-server.exe
+```
+
+另开终端启动前端静态服务：
+
+```powershell
+cd frontend
+npm run preview
+```
+
+浏览器访问：
+
+```text
+http://10.18.47.101
+```
+
+也可以在本机访问：
+
+```text
+http://127.0.0.1
+```
+
+生产环境建议将 `print-server.exe` 注册为 Windows 服务，并把工作目录设置为项目根目录。前端可使用 `npm run preview` 临时运行在 `80` 端口；长期运行更建议使用 IIS、Nginx 或其他静态文件服务器占用 `80` 端口，并把 `/api` 反向代理到 `http://127.0.0.1:8080`。
+
+## 首次使用
+
+首次启动时，系统会检查是否已有管理员。如果没有，会根据 `config.toml` 的 `initial_admin_student_id` 自动创建管理员。
+
+默认账号：
+
+```text
+学号：admin
+密码：admin
+```
+
+如果你修改了 `initial_admin_student_id`，默认密码就是对应学号。首次登录后应立即在“个人设置”中修改密码。
+
+## 普通用户如何使用
+
+1. 使用学号和密码登录。
+2. 首次登录后先修改密码。
+3. 进入“提交打印”。
+4. 拖拽或点击上传文件。
+5. 等待系统生成 PDF 预览。
+6. 选择打印范围：全部、奇数页、偶数页。
+7. 点击“提交”。
+8. 在“我的打印”查看个人任务状态和历史记录。
+9. 在“打印队列”查看所有未完成任务。
+
+限额规则：
+
+- 默认每人每天 50 页。
+- 超额任务不会直接打印，会进入“待审核”。
+- 管理员同意后任务进入队列。
+- 管理员拒绝后任务变为已取消。
+
+取消规则：
+
+- 普通用户只能取消自己的 `queued` 或 `pending_review` 任务。
+- 已开始打印的任务不能由普通用户取消。
+
+## 管理员如何使用
+
+管理员登录后会看到额外菜单：
+
+- 用户管理：导入用户、删除用户、重置密码
+- 队列管理：查看完整队列、暂停/继续队列、取消任务
+- 审核中心：同意或拒绝超额任务
+- 统计中心：查看各用户总页数和任务数，导出 CSV
+- 系统设置：修改限额、管理员联系方式、转让管理员
+
+### 导入用户
+
+进入“用户管理”，上传 Excel、CSV 或文本文件。
+
+Excel 导入规则：
+
+- 读取第一个工作表
+- 读取第一列
+- 每行一个学号
+- 没有表头
+
+新用户默认密码为学号，并要求首次登录修改密码。
+
+### 管理队列
+
+进入“队列管理”：
+
+- “暂停”会阻止后续任务继续提交到打印机。
+- 当前正在打印的任务不会被强制中断。
+- “继续”会恢复队列调度。
+- 管理员可取消未完成任务。
+
+### 审核超额任务
+
+进入“审核中心”：
+
+- “同意”会把任务放回队列尾部。
+- “拒绝”会把任务标记为已取消，并可填写原因。
+
+### 导出统计
+
+进入“统计中心”点击“导出 CSV”，或直接访问：
+
+```text
+/api/admin/stats.csv
+```
+
+需要管理员已登录。
+
+## 数据与文件
+
+运行时目录默认在 `data/`：
+
+- `data/uploads/` 保存原始上传文件
+- `data/previews/` 保存用于预览和打印的 PDF
+- `data/tmp/` 保存导入等临时文件
+- `data/print-server.db` 为 SQLite 数据库
+
+自动清理策略：
+
+- 24 小时前仍未提交的临时上传会被删除。
+- 365 天前已完成或已取消的任务记录及对应文件会被删除。
+- 清理间隔默认 6 小时。
+
+这些时间可通过 `config.toml` 调整：
+
+```toml
+cleanup_interval_hours = 6
+file_retention_days = 365
+temp_upload_retention_hours = 24
+```
+
+## 文档转换与打印
+
+PDF 文件会直接复制为预览文件。
+
+非 PDF 文件：
+
+- 如果配置了 `converter.office_command`，会调用外部转换命令生成 PDF。
+- 如果未配置转换命令，会生成一个占位 PDF，便于开发阶段测试流程。
+
+真实打印：
+
+- `printer.simulate = false` 时，后端会调用 Windows `print` 命令。
+- 打印机名称来自 `config.toml` 的 `printer.name`。
+- HP LaserJet P1106 的实时状态读取可能不可靠，因此当前实现以队列状态和命令执行结果为准。
+- 打印命令失败时系统会暂停队列，管理员处理后可继续。
+
+## 常用接口
+
+- `GET /api/health`：服务探活
+- `POST /api/auth/login`：登录
+- `POST /api/auth/logout`：退出登录
+- `GET /api/auth/me`：获取当前用户
+- `POST /api/print/upload`：上传文件并生成预览
+- `POST /api/print/submit`：提交打印任务
+- `GET /api/queue`：查看队列
+- `GET /api/user/history`：查看个人历史
+- `GET /api/admin/users`：管理员查看用户
+- `GET /api/admin/review`：管理员查看待审核任务
+- `GET /api/admin/stats`：管理员查看统计
+- `GET /api/admin/stats.csv`：管理员导出统计
+
+## 验证命令
+
+后端：
+
+```powershell
+cargo fmt
+cargo check
+```
+
+前端：
+
+```powershell
+cd frontend
+npm install
+npm run build
+```
+
+服务启动后可访问：
+
+```text
+http://127.0.0.1:8080/api/health
+```
+
+如果 `http://127.0.0.1/` 打不开，通常是前端服务没有启动或 `80` 端口被占用。开发模式启动顺序如下：
+
+终端 1：
+
+```powershell
+cargo run
+```
+
+终端 2：
+
+```powershell
+cd frontend
+npm run dev
+```
