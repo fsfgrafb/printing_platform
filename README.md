@@ -57,7 +57,8 @@ simulate = false
 
 ```toml
 [converter]
-office_command = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input \"{input}\" -Output \"{output}\""
+office_program = "powershell"
+office_args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/convert-office.ps1", "-InputPath", "{input}", "-OutputPath", "{output}"]
 command_timeout_seconds = 180
 ```
 
@@ -310,7 +311,7 @@ temp_upload_retention_hours = 24
 
 PDF 文件会直接复制为预览文件。
 
-非 PDF 文件会通过 `converter.office_command` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；未配置转换命令、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
+非 PDF 文件会通过 `converter.office_program` 与 `converter.office_args` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；未配置转换程序、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
 
 真实打印：
 

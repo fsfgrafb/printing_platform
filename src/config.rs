@@ -55,6 +55,12 @@ pub struct PrinterConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConverterConfig {
     #[serde(default)]
+    pub office_program: String,
+    #[serde(default)]
+    pub office_args: Vec<String>,
+    // Kept for compatibility with older deployments. Prefer office_program +
+    // office_args so paths are passed as distinct process arguments.
+    #[serde(default)]
     pub office_command: String,
     #[serde(default = "default_converter_timeout")]
     pub command_timeout_seconds: u64,
@@ -102,6 +108,8 @@ impl Default for PrinterConfig {
 impl Default for ConverterConfig {
     fn default() -> Self {
         Self {
+            office_program: String::new(),
+            office_args: Vec::new(),
             office_command: String::new(),
             command_timeout_seconds: default_converter_timeout(),
         }
@@ -187,6 +195,11 @@ mod tests {
         let config: Config = toml::from_str(include_str!("../config.toml")).unwrap();
         assert_eq!(config.printer.name, "HP LaserJet Professional P1106");
         assert!(!config.printer.simulate);
-        assert!(config.converter.office_command.contains("{input}"));
+        assert_eq!(config.converter.office_program, "powershell");
+        assert!(config
+            .converter
+            .office_args
+            .iter()
+            .any(|argument| argument == "{input}"));
     }
 }

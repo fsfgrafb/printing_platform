@@ -1,17 +1,17 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Input,
+    [string]$InputPath,
 
     [Parameter(Mandatory = $true)]
-    [string]$Output
+    [string]$OutputPath
 )
 
 $ErrorActionPreference = "Stop"
 
-$inputPath = (Resolve-Path -LiteralPath $Input).Path
-$outputPath = [System.IO.Path]::GetFullPath($Output)
-$extension = [System.IO.Path]::GetExtension($inputPath).ToLowerInvariant()
-$outputDir = [System.IO.Path]::GetDirectoryName($outputPath)
+$resolvedInputPath = (Resolve-Path -LiteralPath $InputPath).Path
+$resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+$extension = [System.IO.Path]::GetExtension($resolvedInputPath).ToLowerInvariant()
+$outputDir = [System.IO.Path]::GetDirectoryName($resolvedOutputPath)
 
 if (-not [System.IO.Directory]::Exists($outputDir)) {
     [System.IO.Directory]::CreateDirectory($outputDir) | Out-Null
@@ -22,9 +22,9 @@ switch ($extension) {
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
         try {
-            $doc = $word.Documents.Open($inputPath, $false, $true)
+            $doc = $word.Documents.Open($resolvedInputPath, $false, $true)
             try {
-                $doc.ExportAsFixedFormat($outputPath, 17)
+                $doc.ExportAsFixedFormat($resolvedOutputPath, 17)
             } finally {
                 $doc.Close($false)
             }
@@ -36,9 +36,9 @@ switch ($extension) {
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
         try {
-            $doc = $word.Documents.Open($inputPath, $false, $true)
+            $doc = $word.Documents.Open($resolvedInputPath, $false, $true)
             try {
-                $doc.ExportAsFixedFormat($outputPath, 17)
+                $doc.ExportAsFixedFormat($resolvedOutputPath, 17)
             } finally {
                 $doc.Close($false)
             }
@@ -51,9 +51,9 @@ switch ($extension) {
         $excel.Visible = $false
         $excel.DisplayAlerts = $false
         try {
-            $book = $excel.Workbooks.Open($inputPath, 3, $true)
+            $book = $excel.Workbooks.Open($resolvedInputPath, 3, $true)
             try {
-                $book.ExportAsFixedFormat(0, $outputPath)
+                $book.ExportAsFixedFormat(0, $resolvedOutputPath)
             } finally {
                 $book.Close($false)
             }
@@ -66,9 +66,9 @@ switch ($extension) {
         $excel.Visible = $false
         $excel.DisplayAlerts = $false
         try {
-            $book = $excel.Workbooks.Open($inputPath, 3, $true)
+            $book = $excel.Workbooks.Open($resolvedInputPath, 3, $true)
             try {
-                $book.ExportAsFixedFormat(0, $outputPath)
+                $book.ExportAsFixedFormat(0, $resolvedOutputPath)
             } finally {
                 $book.Close($false)
             }
@@ -79,9 +79,9 @@ switch ($extension) {
     ".ppt" {
         $powerPoint = New-Object -ComObject PowerPoint.Application
         try {
-            $presentation = $powerPoint.Presentations.Open($inputPath, $true, $false, $false)
+            $presentation = $powerPoint.Presentations.Open($resolvedInputPath, $true, $false, $false)
             try {
-                $presentation.SaveAs($outputPath, 32)
+                $presentation.SaveAs($resolvedOutputPath, 32)
             } finally {
                 $presentation.Close()
             }
@@ -92,9 +92,9 @@ switch ($extension) {
     ".pptx" {
         $powerPoint = New-Object -ComObject PowerPoint.Application
         try {
-            $presentation = $powerPoint.Presentations.Open($inputPath, $true, $false, $false)
+            $presentation = $powerPoint.Presentations.Open($resolvedInputPath, $true, $false, $false)
             try {
-                $presentation.SaveAs($outputPath, 32)
+                $presentation.SaveAs($resolvedOutputPath, 32)
             } finally {
                 $presentation.Close()
             }
@@ -113,12 +113,12 @@ switch ($extension) {
                 $section.BottomMargin = 36
                 $section.LeftMargin = 36
                 $section.RightMargin = 36
-                $shape = $doc.InlineShapes.AddPicture($inputPath)
+                $shape = $doc.InlineShapes.AddPicture($resolvedInputPath)
                 $maxWidth = $section.PageSetup.PageWidth - $section.LeftMargin - $section.RightMargin
                 $maxHeight = $section.PageSetup.PageHeight - $section.TopMargin - $section.BottomMargin
                 if ($shape.Width -gt $maxWidth) { $shape.Width = $maxWidth }
                 if ($shape.Height -gt $maxHeight) { $shape.Height = $maxHeight }
-                $doc.ExportAsFixedFormat($outputPath, 17)
+                $doc.ExportAsFixedFormat($resolvedOutputPath, 17)
             } finally {
                 $doc.Close($false)
             }
@@ -132,8 +132,8 @@ switch ($extension) {
         try {
             $doc = $word.Documents.Add()
             try {
-                $doc.Content.Text = [System.IO.File]::ReadAllText($inputPath)
-                $doc.ExportAsFixedFormat($outputPath, 17)
+                $doc.Content.Text = [System.IO.File]::ReadAllText($resolvedInputPath)
+                $doc.ExportAsFixedFormat($resolvedOutputPath, 17)
             } finally {
                 $doc.Close($false)
             }
@@ -146,6 +146,6 @@ switch ($extension) {
     }
 }
 
-if (-not [System.IO.File]::Exists($outputPath)) {
-    throw "Converter did not create output: $outputPath"
+if (-not [System.IO.File]::Exists($resolvedOutputPath)) {
+    throw "Converter did not create output: $resolvedOutputPath"
 }

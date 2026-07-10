@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, process::Stdio};
 
 use tokio::{
     fs,
@@ -21,9 +21,12 @@ pub async fn prepare_preview(config: &Config, source: &Path, preview_pdf: &Path)
     }
 
     ensure_supported(source)?;
-    if config.converter.office_command.trim().is_empty() {
+    if config.converter.office_program.trim().is_empty()
+        && config.converter.office_command.trim().is_empty()
+    {
         return Err(AppError::External(
-            "document conversion is not configured; set converter.office_command".to_string(),
+            "document conversion is not configured; set converter.office_program and converter.office_args"
+                .to_string(),
         ));
     }
     run_external_converter(config, source, preview_pdf).await?;
@@ -73,33 +76,79 @@ async fn run_external_converter(config: &Config, source: &Path, output: &Path) -
     let output_path = output
         .to_str()
         .ok_or_else(|| AppError::External("preview path is not valid UTF-8".to_string()))?;
-    let command_line = config
-        .converter
-        .office_command
-        .replace("{input}", input)
-        .replace("{output}", output_path);
-
-    let mut child = if cfg!(windows) {
-        let mut command = tokio::process::Command::new("cmd");
-        command.arg("/C").arg(&command_line).kill_on_drop(true);
+    let mut command = if !config.converter.office_program.trim().is_empty() {
+        let mut command = tokio::process::Command::new(&config.converter.office_program);
+        command.args(
+            config
+                .converter
+                .office_args
+                .iter()
+                .map(|argument| replace_placeholders(argument, input, output_path)),
+        );
         command
     } else {
-        let mut command = tokio::process::Command::new("sh");
-        command.arg("-c").arg(&command_line).kill_on_drop(true);
+        // Legacy command-string mode is retained for existing installations.
+        // It is inherently sensitive to shell quoting, so new configurations
+        // should always use office_program and office_args.
+        let command_line =
+            replace_placeholders(&config.converter.office_command, input, output_path);
+        let mut command = if cfg!(windows) {
+            let mut command = tokio::process::Command::new("cmd");
+            command.arg("/C").arg(command_line);
+            command
+        } else {
+            let mut command = tokio::process::Command::new("sh");
+            command.arg("-c").arg(command_line);
+            command
+        };
+        command.kill_on_drop(true);
         command
     };
-    let status = timeout(
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let result = timeout(
         Duration::from_secs(config.converter.command_timeout_seconds.max(5)),
-        child.status(),
+        command.output(),
     )
     .await
     .map_err(|_| AppError::External("document converter timed out".to_string()))??;
 
-    if status.success() && output.exists() {
+    if result.status.success() && output.exists() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&result.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&result.stdout).trim().to_string();
+        let details = if !stderr.is_empty() { stderr } else { stdout };
         Err(AppError::External(format!(
-            "document converter failed with status {status}"
+            "document converter failed with status {}{}",
+            result.status,
+            if details.is_empty() {
+                String::new()
+            } else {
+                format!(": {details}")
+            }
         )))
+    }
+}
+
+fn replace_placeholders(template: &str, input: &str, output: &str) -> String {
+    template
+        .replace("{input}", input)
+        .replace("{output}", output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_placeholders;
+
+    #[test]
+    fn placeholders_preserve_spaces_as_part_of_one_argument() {
+        let input = r"C:\Users\ACM User\input file.docx";
+        let output = r"C:\Print Server\preview file.pdf";
+        assert_eq!(replace_placeholders("{input}", input, output), input);
+        assert_eq!(replace_placeholders("{output}", input, output), output);
     }
 }

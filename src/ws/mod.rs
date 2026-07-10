@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Serialize;
 use tokio::sync::{broadcast, broadcast::Receiver};
+use tokio::time::{interval, Duration};
 
 use crate::{app::AppState, auth::middleware::CurrentUser, services::printer::PrinterState};
 
@@ -50,12 +51,26 @@ pub async fn queue_ws(
 }
 
 async fn handle_socket(mut socket: WebSocket, mut receiver: Receiver<QueueEvent>) {
-    while let Ok(event) = receiver.recv().await {
-        let Ok(payload) = serde_json::to_string(&event) else {
-            continue;
-        };
-        if socket.send(Message::Text(payload)).await.is_err() {
-            break;
+    let mut heartbeat = interval(Duration::from_secs(30));
+    loop {
+        tokio::select! {
+            event = receiver.recv() => {
+                let Ok(event) = event else { break };
+                let Ok(payload) = serde_json::to_string(&event) else { continue };
+                if socket.send(Message::Text(payload)).await.is_err() { break; }
+            }
+            incoming = socket.recv() => {
+                match incoming {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(Message::Ping(payload))) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() { break; }
+                    }
+                    _ => {}
+                }
+            }
+            _ = heartbeat.tick() => {
+                if socket.send(Message::Ping(Vec::new())).await.is_err() { break; }
+            }
         }
     }
 }

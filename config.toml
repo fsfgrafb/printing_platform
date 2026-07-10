@@ -21,9 +21,9 @@ job_discovery_seconds = 20
 pdf_printer_path = ""
 
 [converter]
-# Command template for non-PDF conversion.
+# Program and argument list for non-PDF conversion. Keeping each argument as a
+# separate TOML item prevents cmd.exe from corrupting paths that contain spaces.
 # Placeholders: {input}, {output}
-# Example:
-# office_command = "powershell -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input {input} -Output {output}"
-office_command = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input \"{input}\" -Output \"{output}\""
+office_program = "powershell"
+office_args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/convert-office.ps1", "-InputPath", "{input}", "-OutputPath", "{output}"]
 command_timeout_seconds = 180

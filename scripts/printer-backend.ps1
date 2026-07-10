@@ -114,8 +114,7 @@ function Start-PdfPrint {
                 ('"{0}"' -f $printer.DriverName),
                 ('"{0}"' -f $printer.PortName)
             )
-            Start-Process -FilePath $renderer -ArgumentList $arguments -WindowStyle Hidden | Out-Null
-            return
+            return Start-Process -FilePath $renderer -ArgumentList $arguments -WindowStyle Hidden -PassThru
         }
 
         $arguments = @(
@@ -123,17 +122,12 @@ function Start-PdfPrint {
             "-print-settings", '"simplex,monochrome,fit"',
             "-silent", ('"{0}"' -f $Path)
         )
-        $process = Start-Process -FilePath $renderer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
-        if ($process.ExitCode -ne 0) {
-            throw "PDF renderer exited with code $($process.ExitCode): $renderer"
-        }
-        return
+        return Start-Process -FilePath $renderer -ArgumentList $arguments -WindowStyle Hidden -PassThru
     }
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new($Path)
     if (@($startInfo.Verbs) -contains "PrintTo") {
-        Start-Process -FilePath $Path -Verb PrintTo -ArgumentList ('"{0}"' -f $PrinterName) -WindowStyle Hidden | Out-Null
-        return
+        return Start-Process -FilePath $Path -Verb PrintTo -ArgumentList ('"{0}"' -f $PrinterName) -WindowStyle Hidden -PassThru
     }
 
     throw "No PDF command-line printer is installed and .pdf has no PrintTo association. Install SumatraPDF system-wide, place SumatraPDF.exe in tools, or set printer.pdf_printer_path in config.toml."
@@ -203,7 +197,7 @@ switch ($Action) {
         $before = @(Get-Jobs | ForEach-Object { $_.id })
 
         try {
-            Start-PdfPrint -Path $spoolCopy
+            $rendererProcess = Start-PdfPrint -Path $spoolCopy
             $deadline = [DateTime]::UtcNow.AddSeconds($DiscoverySeconds)
             do {
                 Start-Sleep -Milliseconds 250
@@ -214,6 +208,9 @@ switch ($Action) {
                 if ($job) {
                     Write-Result ([ordered]@{ job_id = $job.id; job_name = $job.name })
                     exit 0
+                }
+                if ($rendererProcess -and $rendererProcess.HasExited -and $rendererProcess.ExitCode -ne 0) {
+                    throw "PDF renderer exited with code $($rendererProcess.ExitCode) before creating a Windows print job"
                 }
             } while ([DateTime]::UtcNow -lt $deadline)
             throw "The PDF print handler did not create a discoverable Windows print job within $DiscoverySeconds seconds"

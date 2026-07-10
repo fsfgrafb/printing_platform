@@ -133,6 +133,13 @@ async fn track_printing_task(
             task.windows_job_name
                 .as_deref()
                 .and_then(|name| snapshot.jobs.iter().find(|job| job.name == name))
+        })
+        .or_else(|| {
+            let marker = format!("print-task-{}", task.id).to_ascii_lowercase();
+            snapshot
+                .jobs
+                .iter()
+                .find(|job| job.name.to_ascii_lowercase().contains(&marker))
         });
     if let Some(job) = matching_job {
         sqlx::query("UPDATE print_tasks SET windows_job_id = ?, windows_job_name = ?, job_seen_at = datetime('now'), status_detail = ? WHERE id = ?")

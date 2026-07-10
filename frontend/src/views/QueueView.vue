@@ -9,17 +9,31 @@ const printer = ref({ blocked: false, blocking_reasons: [], warnings: [] })
 const error = ref('')
 let timer = null
 let socket = null
+let reconnectTimer = null
+let stopped = false
 
 onMounted(() => {
+  stopped = false
   load()
   timer = window.setInterval(load, 5000)
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/queue`)
-  socket.onmessage = load
+  connectSocket()
 })
 
+function connectSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/queue`)
+  socket.onmessage = () => load()
+  socket.onerror = () => socket?.close()
+  socket.onclose = () => {
+    socket = null
+    if (!stopped) reconnectTimer = window.setTimeout(connectSocket, 2000)
+  }
+}
+
 onUnmounted(() => {
+  stopped = true
   if (timer) window.clearInterval(timer)
+  if (reconnectTimer) window.clearTimeout(reconnectTimer)
   if (socket) socket.close()
 })
 
@@ -29,6 +43,7 @@ async function load() {
     tasks.value = data.tasks
     paused.value = data.paused
     printer.value = data.printer
+    error.value = ''
   } catch (err) {
     error.value = unwrapError(err)
   }
