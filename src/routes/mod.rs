@@ -1,6 +1,5 @@
 pub mod admin;
 pub mod health;
-pub mod history;
 pub mod print;
 pub mod queue;
 pub mod user;
@@ -29,7 +28,6 @@ pub fn router(state: AppState) -> Router {
         .route("/ws/queue", get(ws::queue_ws))
         .merge(health::router())
         .merge(user::router())
-        .merge(history::router())
         .merge(print::router())
         .merge(queue::router())
         .merge(admin::router())

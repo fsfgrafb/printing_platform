@@ -41,8 +41,9 @@ struct ErrorBody {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let message = self.to_string();
         let status = match self {
-            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::BadRequest(_) | AppError::Multipart(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
@@ -50,14 +51,17 @@ impl IntoResponse for AppError {
             AppError::Io(_)
             | AppError::Sqlx(_)
             | AppError::Toml(_)
-            | AppError::Multipart(_)
             | AppError::Password(_)
             | AppError::External(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
-        let body = Json(ErrorBody {
-            error: self.to_string(),
-        });
+        if status.is_server_error() {
+            tracing::error!(%status, error = %message, "request failed");
+        } else if status != StatusCode::UNAUTHORIZED {
+            tracing::warn!(%status, error = %message, "request rejected");
+        }
+
+        let body = Json(ErrorBody { error: message });
         (status, body).into_response()
     }
 }

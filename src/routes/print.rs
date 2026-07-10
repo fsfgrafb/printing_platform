@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/print/upload", post(upload))
         .route("/print/uploads/:temp_id", delete(remove_upload))
         .route("/print/preview/:temp_id", get(preview))
+        .route("/print/tasks/:task_id/preview", get(task_preview))
         .route("/print/submit", post(submit))
         .route("/print/tasks/:task_id", delete(cancel))
 }
@@ -135,6 +136,45 @@ pub async fn preview(
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/pdf"),
+    );
+    Ok((headers, Body::from(bytes)).into_response())
+}
+
+pub async fn task_preview(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(task_id): Path<i64>,
+) -> AppResult<Response> {
+    let task = sqlx::query_as::<_, (i64, Option<String>)>(
+        "SELECT user_id, preview_path FROM print_tasks WHERE id = ?",
+    )
+    .bind(task_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("print record not found".to_string()))?;
+
+    if !user.is_admin() && task.0 != user.id {
+        return Err(AppError::Forbidden);
+    }
+    let path = task
+        .1
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::NotFound("final PDF is not available".to_string()))?;
+    let bytes = fs::read(&path).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::NotFound("final PDF has expired or is missing".to_string())
+        } else {
+            error.into()
+        }
+    })?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/pdf"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("inline; filename=print-preview.pdf"),
     );
     Ok((headers, Body::from(bytes)).into_response())
 }

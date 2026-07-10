@@ -139,7 +139,8 @@ pub async fn cancel_task(
     sqlx::query(
         r#"
         UPDATE print_tasks
-        SET status = 'cancelled', cancelled_by = ?, review_reason = ?, status_detail = '任务已取消'
+        SET status = 'cancelled', cancelled_by = ?, review_reason = ?,
+            completed_at = datetime('now'), status_detail = '任务已取消'
         WHERE id = ?
         "#,
     )

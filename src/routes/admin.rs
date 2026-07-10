@@ -16,7 +16,7 @@ use crate::{
     auth::{ensure_admin, middleware::CurrentUser, session},
     db::models::{PrintTask, User, UserView},
     error::{AppError, AppResult},
-    routes::{history::PageQuery, queue},
+    routes::queue,
     services::{audit, import, print_service, printer, settings},
     utils,
     ws::QueueEvent,
@@ -28,7 +28,6 @@ pub fn router() -> Router<AppState> {
         .route("/admin/users/import", post(import_users))
         .route("/admin/users/:user_id", delete(delete_user))
         .route("/admin/users/:user_id/reset-password", post(reset_password))
-        .route("/admin/queue", get(admin_queue))
         .route("/admin/queue/pause", post(pause_queue))
         .route("/admin/queue/resume", post(resume_queue))
         .route("/admin/tasks/:task_id", delete(cancel_task))
@@ -37,7 +36,6 @@ pub fn router() -> Router<AppState> {
         .route("/admin/review/:task_id/reject", post(reject_review))
         .route("/admin/stats", get(stats))
         .route("/admin/stats.csv", get(stats_csv))
-        .route("/admin/history", get(admin_history))
         .route("/admin/config", get(get_config).put(update_config))
         .route("/admin/printer/ack-toner", post(ack_toner))
         .route("/admin/transfer", post(transfer_admin))
@@ -51,10 +49,16 @@ pub struct UsersResponse {
     pub total: i64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UsersQuery {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
 pub async fn users(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    Query(query): Query<PageQuery>,
+    Query(query): Query<UsersQuery>,
 ) -> AppResult<Json<UsersResponse>> {
     ensure_admin(&user)?;
     let page = query.page.unwrap_or(1).max(1);
@@ -173,7 +177,7 @@ pub async fn delete_user(
 
     let paths = file_paths_for_user(&state.pool, user_id).await?;
     sqlx::query(
-        "UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin' WHERE user_id = ? AND status IN ('queued', 'printing', 'pending_review')",
+        "UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin', completed_at = datetime('now') WHERE user_id = ? AND status IN ('queued', 'printing', 'pending_review')",
     )
     .bind(user_id)
     .execute(&state.pool)
@@ -199,15 +203,13 @@ pub async fn delete_user(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ResetPasswordRequest {
-    pub new_password: Option<String>,
-}
+pub struct ResetPasswordRequest {}
 
 pub async fn reset_password(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(user_id): Path<i64>,
-    Json(request): Json<ResetPasswordRequest>,
+    Json(_request): Json<ResetPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     ensure_admin(&user)?;
     let target = sqlx::query_as::<_, User>(
@@ -218,17 +220,9 @@ pub async fn reset_password(
     .await?
     .ok_or_else(|| AppError::NotFound("user not found".to_string()))?;
 
-    let new_password = request
-        .new_password
-        .filter(|password| !password.trim().is_empty())
-        .unwrap_or_else(|| target.student_id.clone());
-    let hash = session::hash_password(&new_password)?;
-    // When the administrator changes their own password here, that is a real
-    // self-service password change and fulfils the first-login requirement.
-    let must_change_password = user.id != user_id;
-    sqlx::query("UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?")
+    let hash = session::hash_password(&target.student_id)?;
+    sqlx::query("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?")
         .bind(hash)
-        .bind(must_change_password)
         .bind(user_id)
         .execute(&state.pool)
         .await?;
@@ -241,23 +235,6 @@ pub async fn reset_password(
     )
     .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-pub async fn admin_queue(
-    State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
-) -> AppResult<Json<queue::QueueResponse>> {
-    ensure_admin(&user)?;
-    let rows = queue::queue_rows(&state.pool).await?;
-    let paused = settings::queue_paused(&state.pool).await?;
-    Ok(Json(queue::QueueResponse {
-        tasks: rows
-            .into_iter()
-            .map(|row| queue::to_view(row, &user, true))
-            .collect(),
-        paused,
-        printer: state.printer_state.read().await.clone(),
-    }))
 }
 
 pub async fn pause_queue(
@@ -307,7 +284,7 @@ pub async fn cancel_task(
             )
         })?;
         printer::cancel_job(&state.config, job_id).await?;
-        sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, status_detail = 'Windows 作业已取消' WHERE id = ? AND status = 'printing'")
+        sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, completed_at = datetime('now'), status_detail = 'Windows 作业已取消' WHERE id = ? AND status = 'printing'")
             .bind(reason).bind(task_id).execute(&state.pool).await?;
         if let Some(preview) = current.preview_path.as_deref() {
             if let Some(parent) = std::path::Path::new(preview).parent() {
@@ -342,7 +319,9 @@ pub async fn review_tasks(
     let rows = sqlx::query_as::<_, queue::QueueRow>(
         r#"
         SELECT t.id, t.user_id, u.student_id, t.file_name, t.page_count, t.odd_even,
-               t.status, t.submitted_at, t.review_reason, t.status_detail, t.windows_job_id
+               t.status, t.submitted_at, t.completed_at, t.review_reason, t.status_detail,
+               t.submitted_ip, t.windows_job_id,
+               CASE WHEN t.preview_path IS NOT NULL AND t.preview_path != '' THEN 1 ELSE 0 END AS preview_available
         FROM print_tasks t
         JOIN users u ON u.id = t.user_id
         WHERE t.status = 'pending_review'
@@ -354,7 +333,7 @@ pub async fn review_tasks(
 
     Ok(Json(
         rows.into_iter()
-            .map(|row| queue::to_view(row, &user, true))
+            .map(|row| queue::to_view(row, &user))
             .collect(),
     ))
 }
@@ -412,7 +391,7 @@ pub async fn reject_review(
     let affected = sqlx::query(
         r#"
         UPDATE print_tasks
-        SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?
+        SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, completed_at = datetime('now')
         WHERE id = ? AND status = 'pending_review'
         "#,
     )
@@ -444,72 +423,6 @@ pub struct StatRow {
     pub student_id: String,
     pub total_pages: i64,
     pub total_tasks: i64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdminHistoryQuery {
-    pub page: Option<i64>,
-    pub per_page: Option<i64>,
-    pub student_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct AdminHistoryItem {
-    pub id: i64,
-    pub student_id: String,
-    pub file_name: String,
-    pub page_count: i64,
-    pub status: String,
-    pub submitted_at: String,
-    pub completed_at: Option<String>,
-    pub submitted_ip: Option<String>,
-    pub status_detail: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AdminHistoryResponse {
-    pub items: Vec<AdminHistoryItem>,
-    pub page: i64,
-    pub per_page: i64,
-    pub total: i64,
-}
-
-pub async fn admin_history(
-    State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
-    Query(query): Query<AdminHistoryQuery>,
-) -> AppResult<Json<AdminHistoryResponse>> {
-    ensure_admin(&user)?;
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(50).clamp(1, 200);
-    let offset = (page - 1) * per_page;
-    let student_id = query
-        .student_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM print_tasks t JOIN users u ON u.id = t.user_id WHERE (? IS NULL OR u.student_id = ?)",
-    )
-    .bind(&student_id).bind(&student_id).fetch_one(&state.pool).await?;
-    let items = sqlx::query_as::<_, AdminHistoryItem>(
-        r#"SELECT t.id, u.student_id, t.file_name, t.page_count, t.status, t.submitted_at,
-                  t.completed_at, t.submitted_ip, t.status_detail
-           FROM print_tasks t JOIN users u ON u.id = t.user_id
-           WHERE (? IS NULL OR u.student_id = ?)
-           ORDER BY t.id DESC LIMIT ? OFFSET ?"#,
-    )
-    .bind(&student_id)
-    .bind(&student_id)
-    .bind(per_page)
-    .bind(offset)
-    .fetch_all(&state.pool)
-    .await?;
-    Ok(Json(AdminHistoryResponse {
-        items,
-        page,
-        per_page,
-        total,
-    }))
 }
 
 pub async fn stats(
@@ -685,13 +598,19 @@ pub async fn transfer_admin(
         .await?
     };
 
+    if new_admin.id == user.id {
+        return Err(AppError::Conflict("请选择其他账号接任管理员".to_string()));
+    }
+
+    let mut tx = state.pool.begin().await?;
     sqlx::query("UPDATE users SET role = 'user'")
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE users SET role = 'admin' WHERE id = ?")
         .bind(new_admin.id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     settings::set(&state.pool, "admin_student_id", &new_admin.student_id).await?;
     if let Some(qq) = new_admin.qq.as_deref() {
         settings::set(&state.pool, "admin_qq", qq).await?;

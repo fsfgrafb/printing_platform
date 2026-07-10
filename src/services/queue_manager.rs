@@ -236,7 +236,7 @@ async fn submission_failed(state: &AppState, task: &PrintTask, reason: &str) -> 
 }
 
 async fn fail_task(state: &AppState, task: &PrintTask, reason: &str) -> AppResult<()> {
-    sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'system', review_reason = ?, status_detail = ? WHERE id = ?")
+    sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'system', review_reason = ?, completed_at = datetime('now'), status_detail = ? WHERE id = ?")
         .bind(reason).bind(reason).bind(task.id).execute(&state.pool).await?;
     state.broadcaster.send(QueueEvent::TaskStatus {
         task_id: task.id,

@@ -3,7 +3,6 @@ import { computed, onMounted } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ClipboardList,
-  History,
   LogOut,
   Printer,
   Settings,
@@ -23,16 +22,13 @@ const mustChangePassword = computed(() => Boolean(session.user?.must_change_pass
 const nav = computed(() => [
   { to: '/submit', label: '提交打印', icon: UploadCloud },
   { to: '/queue', label: '打印队列', icon: ClipboardList },
-  { to: '/history', label: '我的打印', icon: History },
   { to: '/settings', label: '个人设置', icon: Settings }
 ])
 
 const adminNav = computed(() => [
   { to: '/admin/users', label: '用户管理', icon: Users },
-  { to: '/admin/queue', label: '队列管理', icon: Printer },
   { to: '/admin/review', label: '审核中心', icon: ShieldCheck },
   { to: '/admin/stats', label: '统计中心', icon: ClipboardList },
-  { to: '/admin/history', label: '全部历史', icon: History },
   { to: '/admin/settings', label: '系统设置', icon: SlidersHorizontal }
 ])
 

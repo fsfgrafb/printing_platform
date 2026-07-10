@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CircleAlert, Eye, LoaderCircle, Send, UploadCloud, X } from '@lucide/vue'
 import { api, unwrapError } from '../api'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const quota = ref({ used_today: 0, reserved: 0, limit: 50, remaining: 50 })
 const adminContact = ref({ student_id: '', qq: '' })
@@ -11,6 +12,7 @@ const submitting = ref(false)
 const dragging = ref(false)
 const message = ref('')
 const error = ref('')
+const showOverLimitConfirm = ref(false)
 let localId = 0
 
 const readyUploads = computed(() => uploads.value.filter(item => item.status === 'ready'))
@@ -20,6 +22,14 @@ const projectedPages = computed(() =>
 )
 const willOverLimit = computed(() => projectedPages.value > quota.value.remaining)
 const canSubmit = computed(() => readyUploads.value.length > 0 && !isConverting.value && !submitting.value)
+const quotaGreenWidth = computed(() => {
+  if (quota.value.limit <= 0) return 0
+  return Math.max(0, quota.value.remaining - projectedPages.value) / quota.value.limit * 100
+})
+const quotaPendingWidth = computed(() => {
+  if (quota.value.limit <= 0) return 0
+  return Math.min(projectedPages.value, quota.value.remaining) / quota.value.limit * 100
+})
 
 onMounted(() => {
   load()
@@ -88,7 +98,7 @@ async function uploadOne(item, source) {
   try {
     const { data } = await api.post('/print/upload', formData, {
       signal: item.controller.signal,
-      headers: { 'Content-Type': 'multipart/form-data' }
+      timeout: 190000
     })
     const uploaded = data.files[0]
     if (!uploaded) throw new Error('服务器未返回上传文件')
@@ -132,11 +142,15 @@ function closeOnEscape(event) {
 async function submit() {
   if (!canSubmit.value) return
   if (willOverLimit.value) {
-    const ok = window.confirm(
-      `本次提交会超过今日限额。任务将进入审核，管理员 QQ：${adminContact.value.qq || '未填写'}，学号：${adminContact.value.student_id || '未填写'}。是否继续？`
-    )
-    if (!ok) return
+    showOverLimitConfirm.value = true
+    return
   }
+
+  await performSubmit()
+}
+
+async function performSubmit() {
+  showOverLimitConfirm.value = false
 
   submitting.value = true
   error.value = ''
@@ -164,7 +178,6 @@ async function submit() {
     <header class="page-header">
       <div>
         <h1>提交打印</h1>
-        <p>添加文件后选择打印页范围，确认无误再统一提交。</p>
       </div>
       <button class="primary-button" type="button" :disabled="!canSubmit" @click="submit">
         <LoaderCircle v-if="submitting" class="spin" :size="18" />
@@ -190,14 +203,18 @@ async function submit() {
       </label>
 
       <aside class="submission-sidebar">
-        <div class="quota-summary" :class="{ danger: willOverLimit }">
-          <div>
-            <span>今日剩余额度</span>
-            <strong>{{ quota.remaining }}<small> 页</small></strong>
+        <div class="quota-progress-card" :class="{ danger: willOverLimit }">
+          <div class="quota-progress-heading">
+            <span>今日额度</span>
+            <strong>{{ quota.remaining }}/{{ quota.limit }} 页</strong>
           </div>
-          <div>
-            <span>本次预计消耗</span>
-            <strong>{{ projectedPages }}<small> 页</small></strong>
+          <div class="quota-track" role="progressbar" :aria-valuenow="quota.remaining" aria-valuemin="0" :aria-valuemax="quota.limit">
+            <span class="quota-remaining-segment" :style="{ width: `${quotaGreenWidth}%` }"></span>
+            <span class="quota-pending-segment" :style="{ width: `${quotaPendingWidth}%` }"></span>
+          </div>
+          <div class="quota-legend">
+            <span><i class="remaining-dot"></i>可用额度</span>
+            <span v-if="projectedPages"><i class="pending-dot"></i>本次文件 {{ projectedPages }} 页</span>
           </div>
         </div>
 
@@ -250,5 +267,15 @@ async function submit() {
         <iframe :src="previewItem.preview_url" title="PDF 预览"></iframe>
       </section>
     </div>
+
+    <ConfirmDialog
+      v-if="showOverLimitConfirm"
+      title="提交超额打印"
+      :message="`本次文件会超过今日额度，任务将进入管理员审核。管理员 QQ：${adminContact.qq || '未填写'}，学号：${adminContact.student_id || '未填写'}。`"
+      confirm-text="继续提交"
+      :busy="submitting"
+      @cancel="showOverLimitConfirm = false"
+      @confirm="performSubmit"
+    />
   </section>
 </template>

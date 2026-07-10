@@ -20,7 +20,6 @@ function exportCsv() {
     <header class="page-header">
       <div>
         <h1>统计中心</h1>
-        <p>按总页数降序</p>
       </div>
       <button class="primary-button" type="button" @click="exportCsv">
         <Download :size="18" />

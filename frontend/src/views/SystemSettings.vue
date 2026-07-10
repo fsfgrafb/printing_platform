@@ -1,16 +1,14 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { Save, Send } from '@lucide/vue'
+import { Save } from '@lucide/vue'
 import { api } from '../api'
 
 const config = ref({
   daily_limit: '50',
   admin_qq: '',
   admin_student_id: '',
-  queue_paused: false,
-  printer: { status: '', blocked: false, blocking_reasons: [], warnings: [], toner_alert_acknowledged: false }
+  queue_paused: false
 })
-const newAdmin = ref('')
 const message = ref('')
 
 onMounted(load)
@@ -26,17 +24,6 @@ async function save(key, value) {
   await load()
 }
 
-async function transfer() {
-  if (!newAdmin.value.trim()) return
-  await api.post('/admin/transfer', { new_admin_student_id: newAdmin.value })
-  message.value = '管理员已转让'
-  await load()
-}
-
-async function acknowledgeToner() {
-  await api.post('/admin/printer/ack-toner')
-  await load()
-}
 </script>
 
 <template>
@@ -44,17 +31,8 @@ async function acknowledgeToner() {
     <header class="page-header">
       <div>
         <h1>系统设置</h1>
-        <p>打印机状态：{{ config.printer.status }} · {{ config.printer.queue_name }}</p>
       </div>
     </header>
-
-    <section v-if="config.printer.blocked" class="alert-banner danger">
-      {{ config.printer.blocking_reasons.join('；') }}。硬件状态恢复后平台会自动解除阻塞。
-    </section>
-    <section v-if="config.printer.warnings?.length && !config.printer.toner_alert_acknowledged" class="alert-banner warning">
-      <span>{{ config.printer.warnings.join('；') }}</span>
-      <button class="ghost-button" type="button" @click="acknowledgeToner">确认提示</button>
-    </section>
 
     <section class="panel form-grid">
       <label>
@@ -83,17 +61,6 @@ async function acknowledgeToner() {
       <button class="ghost-button" type="button" @click="save('admin_student_id', config.admin_student_id)">
         <Save :size="18" />
         <span>保存学号</span>
-      </button>
-    </section>
-
-    <section class="panel form-grid">
-      <label>
-        新管理员学号
-        <input v-model.trim="newAdmin" />
-      </label>
-      <button class="primary-button" type="button" @click="transfer">
-        <Send :size="18" />
-        <span>转让管理员</span>
       </button>
     </section>
 

@@ -1,7 +1,7 @@
 use std::{path::Path, process::Stdio};
 
 use tokio::{
-    fs,
+    fs, task,
     time::{timeout, Duration},
 };
 
@@ -17,7 +17,7 @@ pub async fn prepare_preview(config: &Config, source: &Path, preview_pdf: &Path)
 
     if is_pdf(source) {
         fs::copy(source, preview_pdf).await?;
-        return count_pdf_pages(preview_pdf);
+        return count_pdf_pages_async(preview_pdf).await;
     }
 
     ensure_supported(source)?;
@@ -30,7 +30,7 @@ pub async fn prepare_preview(config: &Config, source: &Path, preview_pdf: &Path)
         ));
     }
     run_external_converter(config, source, preview_pdf).await?;
-    count_pdf_pages(preview_pdf)
+    count_pdf_pages_async(preview_pdf).await
 }
 
 fn is_pdf(path: &Path) -> bool {
@@ -49,6 +49,13 @@ fn count_pdf_pages(path: &Path) -> AppResult<i64> {
     } else {
         Ok(pages)
     }
+}
+
+async fn count_pdf_pages_async(path: &Path) -> AppResult<i64> {
+    let path = path.to_path_buf();
+    task::spawn_blocking(move || count_pdf_pages(&path))
+        .await
+        .map_err(|error| AppError::External(format!("PDF inspection task failed: {error}")))?
 }
 
 fn ensure_supported(path: &Path) -> AppResult<()> {
