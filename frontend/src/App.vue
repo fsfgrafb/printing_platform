@@ -18,6 +18,7 @@ const route = useRoute()
 const router = useRouter()
 const isLogin = computed(() => route.path === '/login')
 const isAdmin = computed(() => session.user?.role === 'admin')
+const mustChangePassword = computed(() => Boolean(session.user?.must_change_password))
 
 const nav = computed(() => [
   { to: '/submit', label: '提交打印', icon: UploadCloud },
@@ -59,14 +60,14 @@ async function logout() {
         </div>
       </div>
 
-      <nav class="nav-group">
+      <nav v-if="!mustChangePassword" class="nav-group">
         <RouterLink v-for="item in nav" :key="item.to" :to="item.to" class="nav-link">
           <component :is="item.icon" :size="18" />
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
 
-      <nav v-if="isAdmin" class="nav-group admin-nav">
+      <nav v-if="isAdmin && !mustChangePassword" class="nav-group admin-nav">
         <RouterLink v-for="item in adminNav" :key="item.to" :to="item.to" class="nav-link">
           <component :is="item.icon" :size="18" />
           <span>{{ item.label }}</span>

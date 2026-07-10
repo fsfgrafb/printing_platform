@@ -29,6 +29,17 @@ impl FromRequestParts<AppState> for CurrentUser {
             return Err(AppError::Unauthorized);
         };
 
+        // A default password must not grant access to any business endpoint.
+        // `/auth/me` is needed to restore the client session and the password
+        // endpoint itself must remain reachable.
+        let path = parts.uri.path();
+        if user.must_change_password
+            && !path.ends_with("/auth/me")
+            && !path.ends_with("/auth/change-password")
+        {
+            return Err(AppError::Conflict("首次登录必须先修改密码".to_string()));
+        }
+
         Ok(CurrentUser(user))
     }
 }

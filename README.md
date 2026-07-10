@@ -311,7 +311,7 @@ temp_upload_retention_hours = 24
 
 PDF 文件会直接复制为预览文件。
 
-非 PDF 文件会通过 `converter.office_program` 与 `converter.office_args` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；未配置转换程序、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
+非 PDF 文件会通过 `converter.office_program` 与 `converter.office_args` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；图片会先转换为灰度并按纸张方向等比缩放，再生成与实际黑白打印一致的 PDF 预览。未配置转换程序、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
 
 真实打印：
 

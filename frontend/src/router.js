@@ -43,6 +43,10 @@ router.beforeEach(async to => {
     return '/login'
   }
 
+  if (session.user?.must_change_password && to.path !== '/settings') {
+    return '/settings'
+  }
+
   if (to.meta.admin && session.user?.role !== 'admin') {
     return '/submit'
   }

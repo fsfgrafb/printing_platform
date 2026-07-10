@@ -1,12 +1,13 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ChevronLeft, ChevronRight } from '@lucide/vue'
-import { api } from '../api'
+import { ChevronLeft, ChevronRight, X } from '@lucide/vue'
+import { api, unwrapError } from '../api'
 
 const items = ref([])
 const page = ref(1)
 const perPage = 20
 const total = ref(0)
+const error = ref('')
 
 onMounted(load)
 
@@ -19,6 +20,17 @@ async function load() {
 async function next(delta) {
   page.value = Math.max(1, page.value + delta)
   await load()
+}
+
+async function cancel(item) {
+  if (!window.confirm(`取消“${item.file_name}”的打印任务？`)) return
+  error.value = ''
+  try {
+    await api.delete(`/print/tasks/${item.id}`)
+    await load()
+  } catch (err) {
+    error.value = unwrapError(err)
+  }
 }
 </script>
 
@@ -49,6 +61,7 @@ async function next(delta) {
           <th>完成时间</th>
           <th>说明</th>
           <th>提交 IP</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -60,8 +73,21 @@ async function next(delta) {
           <td>{{ item.completed_at || '-' }}</td>
           <td>{{ item.status_detail || item.review_reason || '-' }}</td>
           <td>{{ item.submitted_ip || '-' }}</td>
+          <td>
+            <button
+              v-if="['queued', 'pending_review'].includes(item.status)"
+              class="icon-button danger-button"
+              type="button"
+              title="取消任务"
+              @click="cancel(item)"
+            >
+              <X :size="18" />
+            </button>
+            <span v-else>-</span>
+          </td>
         </tr>
       </tbody>
     </table>
+    <p v-if="error" class="error-text">{{ error }}</p>
   </section>
 </template>

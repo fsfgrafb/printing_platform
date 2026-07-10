@@ -26,6 +26,7 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/print/upload", post(upload))
+        .route("/print/uploads/:temp_id", delete(remove_upload))
         .route("/print/preview/:temp_id", get(preview))
         .route("/print/submit", post(submit))
         .route("/print/tasks/:task_id", delete(cancel))
@@ -136,6 +137,42 @@ pub async fn preview(
         HeaderValue::from_static("application/pdf"),
     );
     Ok((headers, Body::from(bytes)).into_response())
+}
+
+pub async fn remove_upload(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(temp_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let upload = sqlx::query_as::<_, TempUpload>(
+        r#"
+        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, created_at
+        FROM temp_uploads
+        WHERE temp_id = ?
+        "#,
+    )
+    .bind(&temp_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("uploaded file not found".to_string()))?;
+
+    if upload.user_id != user.id {
+        return Err(AppError::Forbidden);
+    }
+
+    sqlx::query("DELETE FROM temp_uploads WHERE id = ?")
+        .bind(upload.id)
+        .execute(&state.pool)
+        .await?;
+    for path in [&upload.stored_path, &upload.preview_path] {
+        if let Err(error) = fs::remove_file(path).await {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(?error, %temp_id, %path, "failed to remove temporary upload file");
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(Debug, Deserialize)]

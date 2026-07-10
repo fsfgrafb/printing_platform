@@ -223,8 +223,12 @@ pub async fn reset_password(
         .filter(|password| !password.trim().is_empty())
         .unwrap_or_else(|| target.student_id.clone());
     let hash = session::hash_password(&new_password)?;
-    sqlx::query("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?")
+    // When the administrator changes their own password here, that is a real
+    // self-service password change and fulfils the first-login requirement.
+    let must_change_password = user.id != user_id;
+    sqlx::query("UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?")
         .bind(hash)
+        .bind(must_change_password)
         .bind(user_id)
         .execute(&state.pool)
         .await?;

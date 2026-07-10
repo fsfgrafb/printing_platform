@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Save } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import { refreshSession, session } from '../session'
@@ -10,11 +11,14 @@ const qq = ref('')
 const admin = ref({ student_id: '', qq: '' })
 const message = ref('')
 const error = ref('')
+const router = useRouter()
 
 onMounted(async () => {
   qq.value = session.user?.qq || ''
-  const { data } = await api.get('/user/admin-contact')
-  admin.value = data
+  if (!session.user?.must_change_password) {
+    const { data } = await api.get('/user/admin-contact')
+    admin.value = data
+  }
 })
 
 async function changePassword() {
@@ -28,6 +32,7 @@ async function changePassword() {
     newPassword.value = ''
     message.value = '密码已修改'
     await refreshSession()
+    await router.replace('/submit')
   } catch (err) {
     error.value = unwrapError(err)
   }
@@ -49,7 +54,11 @@ async function saveProfile() {
       </div>
     </header>
 
-    <section class="panel form-grid">
+    <div v-if="session.user?.must_change_password" class="alert-banner warning">
+      首次登录必须先修改默认密码，完成后才能使用打印功能。
+    </div>
+
+    <section v-if="!session.user?.must_change_password" class="panel form-grid">
       <label>
         我的 QQ
         <input v-model.trim="qq" />
