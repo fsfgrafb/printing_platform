@@ -1,18 +1,27 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { Check, X } from '@lucide/vue'
-import { api } from '../api'
+import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const tasks = ref([])
 const rejecting = ref(null)
 const reason = ref('')
+const loaded = ref(false)
+const error = ref('')
 
 onMounted(load)
 
 async function load() {
-  const { data } = await api.get('/admin/review')
-  tasks.value = data
+  try {
+    const { data } = await api.get('/admin/review')
+    tasks.value = data
+    error.value = ''
+  } catch (err) {
+    error.value = unwrapError(err)
+  } finally {
+    loaded.value = true
+  }
 }
 
 async function approve(task) {
@@ -37,11 +46,14 @@ async function confirmReject() {
     <header class="page-header">
       <div>
         <h1>审核中心</h1>
-        <p>{{ tasks.length }} 个待审核任务</p>
+        <p v-if="loaded">{{ tasks.length }} 个待审核任务</p>
       </div>
     </header>
 
-    <div class="task-grid">
+    <p v-if="!loaded" class="loading-state">正在加载审核任务</p>
+    <p v-if="error" class="error-text">{{ error }}</p>
+
+    <div v-if="loaded" class="task-grid">
       <article v-for="task in tasks" :key="task.id" class="task-card review-card">
         <div class="task-top">
           <strong>#{{ task.id }}</strong>

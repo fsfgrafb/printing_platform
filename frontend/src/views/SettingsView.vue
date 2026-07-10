@@ -5,31 +5,42 @@ import { Save } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import { refreshSession, session } from '../session'
 
-const oldPassword = ref('')
 const newPassword = ref('')
+const confirmPassword = ref('')
 const qq = ref('')
 const admin = ref({ student_id: '', qq: '' })
+const loaded = ref(false)
 const message = ref('')
 const error = ref('')
 const router = useRouter()
 
 onMounted(async () => {
-  qq.value = session.user?.qq || ''
-  if (!session.user?.must_change_password) {
-    const { data } = await api.get('/user/admin-contact')
-    admin.value = data
+  try {
+    qq.value = session.user?.qq || ''
+    if (!session.user?.must_change_password) {
+      const { data } = await api.get('/user/admin-contact')
+      admin.value = data
+    }
+  } catch (err) {
+    error.value = unwrapError(err)
+  } finally {
+    loaded.value = true
   }
 })
 
 async function changePassword() {
   error.value = ''
   try {
+    if (newPassword.value !== confirmPassword.value) {
+      error.value = '两次输入的新密码不一致'
+      return
+    }
     await api.post('/auth/change-password', {
-      old_password: oldPassword.value,
-      new_password: newPassword.value
+      new_password: newPassword.value,
+      confirm_password: confirmPassword.value
     })
-    oldPassword.value = ''
     newPassword.value = ''
+    confirmPassword.value = ''
     message.value = '密码已修改'
     await refreshSession()
     await router.replace('/submit')
@@ -50,15 +61,17 @@ async function saveProfile() {
     <header class="page-header">
       <div>
         <h1>个人设置</h1>
-        <p>管理员：{{ admin.student_id || '-' }} · QQ：{{ admin.qq || '-' }}</p>
+        <p v-if="loaded">管理员：{{ admin.student_id || '-' }} · QQ：{{ admin.qq || '-' }}</p>
       </div>
     </header>
 
-    <div v-if="session.user?.must_change_password" class="alert-banner warning">
+    <p v-if="!loaded" class="loading-state">正在加载个人设置</p>
+
+    <div v-if="loaded && session.user?.must_change_password" class="alert-banner warning">
       首次登录必须先修改默认密码，完成后才能使用打印功能。
     </div>
 
-    <section v-if="!session.user?.must_change_password" class="panel form-grid">
+    <section v-if="loaded && !session.user?.must_change_password" class="panel form-grid">
       <label>
         我的 QQ
         <input v-model.trim="qq" />
@@ -69,14 +82,14 @@ async function saveProfile() {
       </button>
     </section>
 
-    <section class="panel form-grid">
-      <label>
-        当前密码
-        <input v-model="oldPassword" type="password" />
-      </label>
+    <section v-if="loaded" class="panel form-grid">
       <label>
         新密码
         <input v-model="newPassword" type="password" />
+      </label>
+      <label>
+        确认密码
+        <input v-model="confirmPassword" type="password" />
       </label>
       <button class="primary-button" type="button" @click="changePassword">
         <Save :size="18" />

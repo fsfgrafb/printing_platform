@@ -28,8 +28,8 @@ pub struct LoginResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ChangePasswordRequest {
-    pub old_password: String,
     pub new_password: String,
+    pub confirm_password: String,
 }
 
 pub async fn ensure_initial_admin(pool: &SqlitePool, config: &Config) -> AppResult<()> {
@@ -119,8 +119,8 @@ pub async fn change_password(
         ));
     }
 
-    if !session::verify_password(&user.password_hash, &request.old_password) {
-        return Err(AppError::Unauthorized);
+    if request.new_password != request.confirm_password {
+        return Err(AppError::BadRequest("passwords do not match".to_string()));
     }
 
     let hash = session::hash_password(&request.new_password)?;

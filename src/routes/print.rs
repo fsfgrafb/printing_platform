@@ -100,6 +100,7 @@ pub async fn upload(
             output.write_all(&chunk).await?;
         }
         output.flush().await?;
+        drop(output);
         info!(%temp_id, path = %stored_path.display(), "uploaded file saved");
 
         let page_count =
@@ -175,22 +176,17 @@ pub async fn preview(
 
 pub async fn task_preview(
     State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
+    CurrentUser(_user): CurrentUser,
     Path(task_id): Path<i64>,
 ) -> AppResult<Response> {
-    let task = sqlx::query_as::<_, (i64, Option<String>)>(
-        "SELECT user_id, preview_path FROM print_tasks WHERE id = ?",
-    )
-    .bind(task_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("print record not found".to_string()))?;
+    let preview_path: Option<String> =
+        sqlx::query_scalar("SELECT preview_path FROM print_tasks WHERE id = ?")
+            .bind(task_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("print record not found".to_string()))?;
 
-    if !user.is_admin() && task.0 != user.id {
-        return Err(AppError::Forbidden);
-    }
-    let path = task
-        .1
+    let path = preview_path
         .map(PathBuf::from)
         .ok_or_else(|| AppError::NotFound("final PDF is not available".to_string()))?;
     let bytes = fs::read(&path).await.map_err(|error| {

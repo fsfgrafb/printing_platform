@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ClipboardList,
@@ -11,6 +11,7 @@ import {
   UploadCloud,
   Users
 } from '@lucide/vue'
+import { api } from './api'
 import { refreshSession, session, signOut } from './session'
 
 const route = useRoute()
@@ -18,6 +19,8 @@ const router = useRouter()
 const isLogin = computed(() => route.path === '/login')
 const isAdmin = computed(() => session.user?.role === 'admin')
 const mustChangePassword = computed(() => Boolean(session.user?.must_change_password))
+const reviewCount = ref(0)
+let reviewTimer = null
 
 const nav = computed(() => [
   { to: '/submit', label: '提交打印', icon: UploadCloud },
@@ -27,7 +30,7 @@ const nav = computed(() => [
 
 const adminNav = computed(() => [
   { to: '/admin/users', label: '用户管理', icon: Users },
-  { to: '/admin/review', label: '审核中心', icon: ShieldCheck },
+  { to: '/admin/review', label: '审核中心', icon: ShieldCheck, badge: reviewCount.value },
   { to: '/admin/stats', label: '统计中心', icon: ClipboardList },
   { to: '/admin/settings', label: '系统设置', icon: SlidersHorizontal }
 ])
@@ -35,11 +38,44 @@ const adminNav = computed(() => [
 onMounted(async () => {
   await refreshSession()
   if (!session.user && !isLogin.value) router.replace('/login')
+  updateReviewPolling()
 })
 
+onUnmounted(stopReviewPolling)
+
+watch([isAdmin, mustChangePassword], updateReviewPolling)
+
 async function logout() {
+  stopReviewPolling()
   await signOut()
+  reviewCount.value = 0
   router.replace('/login')
+}
+
+function updateReviewPolling() {
+  stopReviewPolling()
+  if (!isAdmin.value || mustChangePassword.value) {
+    reviewCount.value = 0
+    return
+  }
+  loadReviewCount()
+  reviewTimer = window.setInterval(loadReviewCount, 3000)
+}
+
+function stopReviewPolling() {
+  if (reviewTimer) {
+    window.clearInterval(reviewTimer)
+    reviewTimer = null
+  }
+}
+
+async function loadReviewCount() {
+  try {
+    const { data } = await api.get('/admin/review')
+    reviewCount.value = Array.isArray(data) ? data.length : 0
+  } catch {
+    reviewCount.value = 0
+  }
 }
 </script>
 
@@ -67,6 +103,7 @@ async function logout() {
         <RouterLink v-for="item in adminNav" :key="item.to" :to="item.to" class="nav-link">
           <component :is="item.icon" :size="18" />
           <span>{{ item.label }}</span>
+          <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
         </RouterLink>
       </nav>
 

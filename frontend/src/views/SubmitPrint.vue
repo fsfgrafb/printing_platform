@@ -58,7 +58,6 @@ async function load() {
     restoreUploads(uploadsRes.data.files || [])
   } catch (err) {
     error.value = unwrapError(err)
-    quotaLoaded.value = true
   }
 }
 
@@ -217,7 +216,12 @@ async function performSubmit() {
       </button>
     </header>
 
-    <div class="submit-layout">
+    <template v-if="!quotaLoaded">
+      <p v-if="!error" class="loading-state">正在加载提交页面</p>
+      <p v-else class="error-text">{{ error }}</p>
+    </template>
+
+    <div v-else class="submit-layout">
       <label
         class="dropzone submit-dropzone"
         :class="{ dragging }"
@@ -273,7 +277,9 @@ async function performSubmit() {
                 <strong :title="file.original_name">{{ file.original_name }}</strong>
                 <span v-if="file.status === 'loading'">正在上传并生成预览…</span>
                 <span v-else-if="file.status === 'error'" class="danger-text" :title="file.error">{{ file.error }}</span>
-                <span v-else>{{ file.page_count }} 页 · 实际打印 {{ selectedPages(file) }} 页</span>
+                <span v-else>
+                  {{ file.page_count }} 页<template v-if="file.odd_even !== 'all'"> · 实际打印 {{ selectedPages(file) }} 页</template>
+                </span>
               </div>
               <button class="icon-button remove-button" type="button" title="移出" @click="removeUpload(file)">
                 <X :size="18" />

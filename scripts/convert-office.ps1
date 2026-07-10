@@ -141,7 +141,17 @@ switch ($extension) {
         try {
             $doc = $word.Documents.Add()
             try {
-                $doc.Content.Text = [System.IO.File]::ReadAllText($resolvedInputPath)
+                $stream = [System.IO.File]::Open($resolvedInputPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                try {
+                    $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+                    try {
+                        $doc.Content.Text = $reader.ReadToEnd()
+                    } finally {
+                        $reader.Close()
+                    }
+                } finally {
+                    $stream.Close()
+                }
                 $doc.ExportAsFixedFormat($resolvedOutputPath, 17)
             } finally {
                 $doc.Close($false)

@@ -243,7 +243,7 @@ http://127.0.0.1
 - 统计中心：查看各用户总页数和任务数，导出 CSV
 - 系统设置：修改限额和管理员联系方式
 
-“打印队列”对管理员额外提供全部用户近一年的记录、按学号筛选、最终 PDF 预览、暂停/继续、取消和审批操作。普通用户只能预览属于自己的最终 PDF；其他用户的实时任务仍隐藏文件名和身份。
+“打印队列”向所有登录用户显示全部用户近一年的记录，并支持按学号筛选、最终 PDF 预览和“只看我的打印”。管理员额外拥有暂停/继续队列、取消他人任务和审批操作。
 
 ### 导入用户
 
@@ -297,7 +297,7 @@ Excel 导入规则：
 自动清理策略：
 
 - 24 小时前仍未提交的临时上传会被删除。
-- 最终筛页并渲染好的打印 PDF 会与任务记录一起保留，管理员可预览所有人的文件，普通用户只能预览自己的文件。
+- 最终筛页并渲染好的打印 PDF 会与任务记录一起保留，登录用户可在打印队列中预览这些记录。
 - 365 天前已完成或已取消的任务记录及最终 PDF 等对应文件会一起删除。
 - 清理间隔默认 6 小时。
 
@@ -359,8 +359,8 @@ Windows 还可能返回 `Active`、`Processing`、`Busy`、`Initializing`、`Wai
 - `GET /api/auth/me`：获取当前用户
 - `POST /api/print/upload`：上传文件并生成预览
 - `POST /api/print/submit`：提交打印任务
-- `GET /api/queue`：分页查看实时队列与有权限查看的历史，可传 `mine_only=true`；管理员还可传 `student_id`
-- `GET /api/print/tasks/:task_id/preview`：预览最终打印 PDF（仅管理员或记录本人）
+- `GET /api/queue`：分页查看共享队列与历史，可传 `mine_only=true` 或 `student_id`
+- `GET /api/print/tasks/:task_id/preview`：预览最终打印 PDF（登录用户可访问）
 - `GET /api/admin/users`：管理员查看用户
 - `GET /api/admin/review`：管理员查看待审核任务
 - `GET /api/admin/stats`：管理员查看统计

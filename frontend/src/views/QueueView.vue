@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronLeft, ChevronRight, Eye, Pause, Play, RefreshCw, Search, X } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, Eye, Pause, Play, Search, X } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { session } from '../session'
@@ -44,7 +44,7 @@ const printerDisplay = computed(() => {
 onMounted(() => {
   stopped = false
   load()
-  timer = window.setInterval(load, 5000)
+  timer = window.setInterval(load, 3000)
   connectSocket()
   window.addEventListener('keydown', closeOnEscape)
 })
@@ -75,7 +75,7 @@ async function load() {
         page: page.value,
         per_page: perPage,
         mine_only: mineOnly.value,
-        student_id: isAdmin.value && !mineOnly.value ? studentId.value || undefined : undefined
+        student_id: !mineOnly.value ? studentId.value || undefined : undefined
       }
     })
     tasks.value = data.tasks
@@ -172,7 +172,7 @@ function rangeLabel(range) {
         <p>当前记录与近一年的打印历史</p>
       </div>
       <div class="button-row queue-toolbar">
-        <div v-if="isAdmin && !mineOnly" class="queue-search">
+        <div v-if="!mineOnly" class="queue-search">
           <input v-model.trim="studentId" placeholder="按学号筛选" @keyup.enter="searchStudent" />
           <button class="icon-button" type="button" title="查询" @click="searchStudent"><Search :size="18" /></button>
         </div>
@@ -180,15 +180,11 @@ function rangeLabel(range) {
           <input v-model="mineOnly" type="checkbox" @change="toggleMine" />
           <span>只看我的打印</span>
         </label>
-        <button class="ghost-button" type="button" @click="load">
-          <RefreshCw :size="18" />
-          <span>刷新</span>
-        </button>
         <template v-if="isAdmin">
-          <button v-if="!paused" class="ghost-button" type="button" @click="pauseQueue">
+          <button v-if="!paused" class="ghost-button queue-admin-button" type="button" @click="pauseQueue">
             <Pause :size="18" /><span>暂停队列</span>
           </button>
-          <button v-else class="primary-button" type="button" @click="resumeQueue">
+          <button v-else class="primary-button queue-admin-button" type="button" @click="resumeQueue">
             <Play :size="18" /><span>继续队列</span>
           </button>
         </template>
@@ -246,7 +242,7 @@ function rangeLabel(range) {
         </div>
         <div class="queue-task-actions">
           <button v-if="task.preview_url" class="ghost-button" type="button" @click="previewTask = task">
-            <Eye :size="18" /><span>预览最终 PDF</span>
+            <Eye :size="18" /><span>预览</span>
           </button>
           <button
             v-if="(isAdmin && ['queued', 'printing', 'pending_review'].includes(task.status)) || (task.mine && ['queued', 'pending_review'].includes(task.status))"
@@ -260,7 +256,8 @@ function rangeLabel(range) {
       </article>
     </div>
 
-    <p v-if="!tasks.length" class="empty-state">没有符合条件的打印记录</p>
+    <p v-if="!loaded" class="loading-state">正在加载打印队列</p>
+    <p v-else-if="!tasks.length" class="empty-state">没有符合条件的打印记录</p>
     <footer v-if="total > perPage" class="pagination-bar">
       <span>共 {{ total }} 条</span>
       <div class="button-row">

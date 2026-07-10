@@ -1,13 +1,21 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { Download } from '@lucide/vue'
-import { api } from '../api'
+import { api, unwrapError } from '../api'
 
 const rows = ref([])
+const loaded = ref(false)
+const error = ref('')
 
 onMounted(async () => {
-  const { data } = await api.get('/admin/stats')
-  rows.value = data
+  try {
+    const { data } = await api.get('/admin/stats')
+    rows.value = data
+  } catch (err) {
+    error.value = unwrapError(err)
+  } finally {
+    loaded.value = true
+  }
 })
 
 function exportCsv() {
@@ -27,7 +35,10 @@ function exportCsv() {
       </button>
     </header>
 
-    <table class="data-table">
+    <p v-if="!loaded" class="loading-state">正在加载统计数据</p>
+    <p v-if="error" class="error-text">{{ error }}</p>
+
+    <table v-if="loaded" class="data-table">
       <thead>
         <tr>
           <th>学号</th>

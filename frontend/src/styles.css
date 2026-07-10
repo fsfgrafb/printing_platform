@@ -89,6 +89,20 @@ button:disabled {
   border-radius: 8px;
 }
 
+.nav-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #d92d20;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .nav-link.router-link-active {
   color: #0f5ea8;
   background: #eaf4ff;
@@ -189,13 +203,24 @@ button:disabled {
 }
 
 .submit-dropzone {
+  position: relative;
   min-width: 0;
   min-height: 520px;
   align-content: center;
   border-width: 2px;
-  background: linear-gradient(145deg, #f8fbff, #eef7ff);
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(248, 251, 255, 0.92), rgba(238, 247, 255, 0.9)),
+    linear-gradient(120deg, #cce7ff, #dff7ee, #fff1c7, #ffdce5, #d8e8ff);
+  background-size: auto, 320% 320%;
   cursor: pointer;
   transition: box-shadow 160ms ease, transform 160ms ease;
+  animation: smartDropzoneFlow 8s ease-in-out infinite;
+}
+
+.submit-dropzone > * {
+  position: relative;
+  z-index: 1;
 }
 
 .submit-dropzone:hover {
@@ -204,7 +229,6 @@ button:disabled {
 
 .submit-dropzone.dragging {
   border-color: #1667b7;
-  background: #e6f2ff;
   transform: scale(0.995);
 }
 
@@ -481,6 +505,12 @@ button:disabled {
   to { transform: rotate(360deg); }
 }
 
+@keyframes smartDropzoneFlow {
+  0% { background-position: 0 0, 0% 50%; }
+  50% { background-position: 0 0, 100% 50%; }
+  100% { background-position: 0 0, 0% 50%; }
+}
+
 .list-card,
 .task-card {
   position: relative;
@@ -710,6 +740,14 @@ select {
   color: #687386;
 }
 
+.loading-state {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  margin: 0;
+  color: #687386;
+}
+
 .error-text {
   margin: 0;
   color: #b42318;
@@ -799,6 +837,10 @@ select {
 }
 
 .queue-search input { width: 160px; }
+
+.queue-admin-button {
+  width: 112px;
+}
 
 .check-control {
   display: inline-flex;

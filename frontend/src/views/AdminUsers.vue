@@ -15,6 +15,7 @@ const transferStudentId = ref('')
 const showAddUser = ref(false)
 const newStudentId = ref('')
 const busy = ref(false)
+const loaded = ref(false)
 const error = ref('')
 const router = useRouter()
 
@@ -25,8 +26,10 @@ async function load() {
     const { data } = await api.get('/admin/users', { params: { page: 1, per_page: 200 } })
     users.value = data.items
     total.value = data.total
+    loaded.value = true
   } catch (err) {
     error.value = unwrapError(err)
+    loaded.value = true
   }
 }
 
@@ -109,7 +112,7 @@ function roleLabel(user) {
     <header class="page-header">
       <div>
         <h1>用户管理</h1>
-        <p>共 {{ total }} 个账号</p>
+        <p v-if="loaded">共 {{ total }} 个账号</p>
       </div>
       <div class="button-row">
         <button class="ghost-button" type="button" @click="showAddUser = !showAddUser">
@@ -128,7 +131,9 @@ function roleLabel(user) {
     <p v-if="result" class="ok-text">新增 {{ result.created.length }} 人，跳过 {{ result.skipped.length }} 人</p>
     <p v-if="error" class="error-text">{{ error }}</p>
 
-    <section v-if="showAddUser" class="panel form-grid">
+    <p v-if="!loaded" class="loading-state">正在加载用户列表</p>
+
+    <section v-if="loaded && showAddUser" class="panel form-grid">
       <label>
         学号
         <input v-model.trim="newStudentId" autocomplete="off" @keyup.enter="createUser" />
@@ -142,7 +147,7 @@ function roleLabel(user) {
       </div>
     </section>
 
-    <table class="data-table">
+    <table v-if="loaded" class="data-table">
       <thead>
         <tr><th>学号</th><th>角色</th><th>QQ</th><th></th></tr>
       </thead>

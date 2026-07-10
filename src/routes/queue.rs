@@ -112,19 +112,16 @@ pub async fn queue_rows(
     page: i64,
     per_page: i64,
 ) -> AppResult<(Vec<QueueRow>, i64)> {
-    let admin = user.is_admin();
     let offset = (page - 1) * per_page;
-    let student_filter = admin.then_some(student_id).flatten().filter(|_| !mine_only);
-    // Administrators can inspect the full one-year history. Regular users see
-    // the shared live queue plus all of their own retained records.
+    let student_filter = student_id.filter(|_| !mine_only);
+    // The queue is shared: every signed-in user can inspect the retained
+    // queue history, and can narrow it by student id.
     let visibility = if mine_only {
         "t.user_id = ?"
     } else if student_filter.is_some() {
         "u.student_id = ?"
-    } else if admin {
-        "1 = 1"
     } else {
-        "(t.user_id = ? OR t.status IN ('queued', 'printing', 'pending_review'))"
+        "1 = 1"
     };
     let count_sql = format!(
         "SELECT COUNT(*) FROM print_tasks t JOIN users u ON u.id = t.user_id WHERE {visibility}"
@@ -146,13 +143,12 @@ pub async fn queue_rows(
         "#
     );
 
-    let binds_user = mine_only || !admin;
     let total = if let Some(student_id) = student_filter {
         sqlx::query_scalar(&count_sql)
             .bind(student_id)
             .fetch_one(pool)
             .await?
-    } else if binds_user {
+    } else if mine_only {
         sqlx::query_scalar(&count_sql)
             .bind(user.id)
             .fetch_one(pool)
@@ -167,7 +163,7 @@ pub async fn queue_rows(
             .bind(offset)
             .fetch_all(pool)
             .await?
-    } else if binds_user {
+    } else if mine_only {
         sqlx::query_as::<_, QueueRow>(&list_sql)
             .bind(user.id)
             .bind(per_page)
@@ -186,23 +182,23 @@ pub async fn queue_rows(
 
 pub fn to_view(row: QueueRow, user: &User) -> QueueTaskView {
     let mine = row.user_id == user.id;
-    let visible = user.is_admin() || mine;
     QueueTaskView {
         id: row.id,
         status: row.status,
         page_count: row.page_count,
         odd_even: row.odd_even,
         submitted_at: row.submitted_at,
-        completed_at: visible.then_some(row.completed_at).flatten(),
-        owner_name: visible.then_some(row.student_id),
+        completed_at: row.completed_at,
+        owner_name: Some(row.student_id),
         mine,
-        file_name_visible: visible,
-        file_name: visible.then_some(row.file_name),
-        review_reason: visible.then_some(row.review_reason).flatten(),
-        status_detail: visible.then_some(row.status_detail).flatten(),
-        submitted_ip: visible.then_some(row.submitted_ip).flatten(),
-        windows_job_id: visible.then_some(row.windows_job_id).flatten(),
-        preview_url: (visible && row.preview_available)
+        file_name_visible: true,
+        file_name: Some(row.file_name),
+        review_reason: row.review_reason,
+        status_detail: row.status_detail,
+        submitted_ip: row.submitted_ip,
+        windows_job_id: row.windows_job_id,
+        preview_url: row
+            .preview_available
             .then(|| format!("/api/print/tasks/{}/preview", row.id)),
     }
 }

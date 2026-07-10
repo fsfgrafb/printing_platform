@@ -11,6 +11,7 @@ const config = ref({
 })
 const transferStudentId = ref('')
 const saving = ref(false)
+const loaded = ref(false)
 const message = ref('')
 const error = ref('')
 const router = useRouter()
@@ -18,8 +19,15 @@ const router = useRouter()
 onMounted(load)
 
 async function load() {
-  const { data } = await api.get('/admin/config')
-  config.value = data
+  try {
+    const { data } = await api.get('/admin/config')
+    config.value = data
+    error.value = ''
+  } catch (err) {
+    error.value = unwrapError(err)
+  } finally {
+    loaded.value = true
+  }
 }
 
 async function save() {
@@ -54,7 +62,9 @@ async function save() {
       </div>
     </header>
 
-    <section class="panel form-grid">
+    <p v-if="!loaded" class="loading-state">正在加载系统设置</p>
+
+    <section v-if="loaded" class="panel form-grid">
       <label>
         每日限额
         <input v-model.trim="config.daily_limit" type="number" min="0" />
