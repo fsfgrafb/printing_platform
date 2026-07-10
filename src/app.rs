@@ -1,14 +1,18 @@
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use tokio::sync::{Mutex, RwLock};
 
-use crate::{config::Config, ws::Broadcaster};
+use crate::{config::Config, services::printer::PrinterState, ws::Broadcaster};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<Config>,
     pub broadcaster: Broadcaster,
+    pub printer_state: Arc<RwLock<PrinterState>>,
+    pub submission_lock: Arc<Mutex<()>>,
+    pub queue_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -17,6 +21,9 @@ impl AppState {
             pool,
             config: Arc::new(config),
             broadcaster: Broadcaster::new(128),
+            printer_state: Arc::new(RwLock::new(PrinterState::starting())),
+            submission_lock: Arc::new(Mutex::new(())),
+            queue_lock: Arc::new(Mutex::new(())),
         }
     }
 }

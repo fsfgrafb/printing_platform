@@ -5,6 +5,7 @@ import { api, unwrapError } from '../api'
 
 const tasks = ref([])
 const paused = ref(false)
+const printer = ref({ blocked: false, blocking_reasons: [], warnings: [] })
 const error = ref('')
 let timer = null
 let socket = null
@@ -27,6 +28,7 @@ async function load() {
     const { data } = await api.get('/queue')
     tasks.value = data.tasks
     paused.value = data.paused
+    printer.value = data.printer
   } catch (err) {
     error.value = unwrapError(err)
   }
@@ -51,6 +53,13 @@ async function cancel(task) {
       </button>
     </header>
 
+    <div v-if="printer.blocked" class="alert-banner danger">
+      打印机暂时阻塞：{{ printer.blocking_reasons.join('；') }}。故障清除后队列会自动继续。
+    </div>
+    <div v-else-if="printer.warnings?.length" class="alert-banner warning">
+      {{ printer.warnings.join('；') }}
+    </div>
+
     <div class="task-grid">
       <article v-for="task in tasks" :key="task.id" class="task-card" :class="{ mine: task.mine }">
         <div class="task-top">
@@ -59,6 +68,7 @@ async function cancel(task) {
         </div>
         <h2>{{ task.file_name || `任务 ${task.id}` }}</h2>
         <p>{{ task.page_count }} 页 · {{ task.odd_even }} · {{ task.owner_name || '其他用户' }}</p>
+        <p v-if="task.status_detail && task.mine">{{ task.status_detail }}</p>
         <button
           v-if="task.mine && ['queued', 'pending_review'].includes(task.status)"
           class="icon-button danger-button"

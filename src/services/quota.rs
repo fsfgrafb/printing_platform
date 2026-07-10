@@ -1,5 +1,5 @@
 use chrono::Local;
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::{error::AppResult, services::settings};
 
@@ -20,7 +20,8 @@ pub async fn used_today(pool: &SqlitePool, user_id: i64) -> AppResult<i64> {
         FROM print_tasks
         WHERE user_id = ?
           AND status = 'done'
-          AND date(COALESCE(completed_at, submitted_at)) = ?
+          AND approved_over_quota = 0
+          AND date(COALESCE(completed_at, submitted_at), 'localtime') = ?
         "#,
     )
     .bind(user_id)
@@ -31,7 +32,26 @@ pub async fn used_today(pool: &SqlitePool, user_id: i64) -> AppResult<i64> {
     Ok(used)
 }
 
-pub async fn add_usage(pool: &SqlitePool, user_id: i64, pages: i64) -> AppResult<()> {
+pub async fn reserved(pool: &SqlitePool, user_id: i64) -> AppResult<i64> {
+    Ok(sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(page_count), 0)
+        FROM print_tasks
+        WHERE user_id = ?
+          AND status IN ('queued', 'printing')
+          AND approved_over_quota = 0
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub async fn add_usage_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    user_id: i64,
+    pages: i64,
+) -> AppResult<()> {
     let date = today();
     sqlx::query(
         r#"
@@ -44,7 +64,7 @@ pub async fn add_usage(pool: &SqlitePool, user_id: i64, pages: i64) -> AppResult
     .bind(user_id)
     .bind(date)
     .bind(pages)
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())

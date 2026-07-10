@@ -102,6 +102,45 @@ switch ($extension) {
             $powerPoint.Quit()
         }
     }
+    { $_ -in ".jpg", ".jpeg", ".png", ".bmp" } {
+        $word = New-Object -ComObject Word.Application
+        $word.Visible = $false
+        try {
+            $doc = $word.Documents.Add()
+            try {
+                $section = $doc.Sections.Item(1)
+                $section.TopMargin = 36
+                $section.BottomMargin = 36
+                $section.LeftMargin = 36
+                $section.RightMargin = 36
+                $shape = $doc.InlineShapes.AddPicture($inputPath)
+                $maxWidth = $section.PageSetup.PageWidth - $section.LeftMargin - $section.RightMargin
+                $maxHeight = $section.PageSetup.PageHeight - $section.TopMargin - $section.BottomMargin
+                if ($shape.Width -gt $maxWidth) { $shape.Width = $maxWidth }
+                if ($shape.Height -gt $maxHeight) { $shape.Height = $maxHeight }
+                $doc.ExportAsFixedFormat($outputPath, 17)
+            } finally {
+                $doc.Close($false)
+            }
+        } finally {
+            $word.Quit()
+        }
+    }
+    ".txt" {
+        $word = New-Object -ComObject Word.Application
+        $word.Visible = $false
+        try {
+            $doc = $word.Documents.Add()
+            try {
+                $doc.Content.Text = [System.IO.File]::ReadAllText($inputPath)
+                $doc.ExportAsFixedFormat($outputPath, 17)
+            } finally {
+                $doc.Close($false)
+            }
+        } finally {
+            $word.Quit()
+        }
+    }
     default {
         throw "Unsupported Office file extension: $extension"
     }

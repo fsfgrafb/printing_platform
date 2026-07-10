@@ -114,7 +114,8 @@ pub async fn cancel_task(
     let task = sqlx::query_as::<_, PrintTask>(
         r#"
         SELECT id, user_id, file_name, stored_path, preview_path, page_count, odd_even,
-               status, submitted_at, completed_at, cancelled_by, review_reason, approved_over_quota
+               status, submitted_at, completed_at, cancelled_by, review_reason, approved_over_quota,
+               windows_job_id, windows_job_name, printer_submitted_at, job_seen_at, status_detail
         FROM print_tasks
         WHERE id = ?
         "#,
@@ -138,7 +139,7 @@ pub async fn cancel_task(
     sqlx::query(
         r#"
         UPDATE print_tasks
-        SET status = 'cancelled', cancelled_by = ?, review_reason = ?
+        SET status = 'cancelled', cancelled_by = ?, review_reason = ?, status_detail = '任务已取消'
         WHERE id = ?
         "#,
     )
@@ -151,7 +152,8 @@ pub async fn cancel_task(
     let updated = sqlx::query_as::<_, PrintTask>(
         r#"
         SELECT id, user_id, file_name, stored_path, preview_path, page_count, odd_even,
-               status, submitted_at, completed_at, cancelled_by, review_reason, approved_over_quota
+               status, submitted_at, completed_at, cancelled_by, review_reason, approved_over_quota,
+               windows_job_id, windows_job_name, printer_submitted_at, job_seen_at, status_detail
         FROM print_tasks
         WHERE id = ?
         "#,

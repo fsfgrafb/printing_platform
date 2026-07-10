@@ -11,6 +11,7 @@ mod ws;
 use app::AppState;
 use config::Config;
 use error::AppResult;
+use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -26,9 +27,9 @@ async fn main() -> AppResult<()> {
         .init();
 
     let config = Config::load("config.toml")?;
-    utils::file::ensure_data_dirs(&config).await?;
+    utils::ensure_data_dirs(&config).await?;
 
-    let pool = db::pool::connect(&config.database_url).await?;
+    let pool = db::connect(&config.database_url).await?;
     db::migrate::run(&pool).await?;
     auth::login::ensure_initial_admin(&pool, &config).await?;
 
@@ -40,9 +41,12 @@ async fn main() -> AppResult<()> {
     let listener = TcpListener::bind(&state.config.server.bind).await?;
     info!("print server listening on {}", state.config.server.bind);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

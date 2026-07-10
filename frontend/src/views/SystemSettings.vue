@@ -8,7 +8,7 @@ const config = ref({
   admin_qq: '',
   admin_student_id: '',
   queue_paused: false,
-  printer_status: ''
+  printer: { status: '', blocked: false, blocking_reasons: [], warnings: [], toner_alert_acknowledged: false }
 })
 const newAdmin = ref('')
 const message = ref('')
@@ -32,6 +32,11 @@ async function transfer() {
   message.value = '管理员已转让'
   await load()
 }
+
+async function acknowledgeToner() {
+  await api.post('/admin/printer/ack-toner')
+  await load()
+}
 </script>
 
 <template>
@@ -39,9 +44,17 @@ async function transfer() {
     <header class="page-header">
       <div>
         <h1>系统设置</h1>
-        <p>打印机状态：{{ config.printer_status }}</p>
+        <p>打印机状态：{{ config.printer.status }} · {{ config.printer.queue_name }}</p>
       </div>
     </header>
+
+    <section v-if="config.printer.blocked" class="alert-banner danger">
+      {{ config.printer.blocking_reasons.join('；') }}。硬件状态恢复后平台会自动解除阻塞。
+    </section>
+    <section v-if="config.printer.warnings?.length && !config.printer.toner_alert_acknowledged" class="alert-banner warning">
+      <span>{{ config.printer.warnings.join('；') }}</span>
+      <button class="ghost-button" type="button" @click="acknowledgeToner">确认提示</button>
+    </section>
 
     <section class="panel form-grid">
       <label>

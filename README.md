@@ -2,7 +2,7 @@
 
 Rust + axum + SQLite 后端，Vue 3 前端。项目用于实验室内网自助打印：用户上传文件、预览、提交队列；系统按每日页数限额控制，超额任务进入管理员审核。
 
-后端默认使用模拟打印，方便在开发机验证完整业务流程。部署到实验室 Windows 打印主机时，在 `config.toml` 中把 `printer.simulate` 改为 `false`。
+代码内置配置默认使用模拟打印；仓库中的 `config.toml` 已按目标打印主机设置为真实模式。在开发机运行前请将 `printer.simulate` 临时改为 `true`。
 
 ## 环境准备
 
@@ -37,16 +37,19 @@ temp_upload_retention_hours = 24
 bind = "127.0.0.1:8080"
 
 [printer]
-name = "HP LaserJet P1106"
-simulate = true
+name = "HP LaserJet Professional P1106"
+simulate = false
 command_timeout_seconds = 60
+backend_script = "scripts/printer-backend.ps1"
+job_discovery_seconds = 20
+pdf_printer_path = ""
 ```
 
 开发时保持 `simulate = true`。真实提交到打印机时改为：
 
 ```toml
 [printer]
-name = "HP LaserJet P1106"
+name = "HP LaserJet Professional P1106"
 simulate = false
 ```
 
@@ -54,10 +57,44 @@ simulate = false
 
 ```toml
 [converter]
-office_command = "powershell -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input {input} -Output {output}"
+office_command = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input \"{input}\" -Output \"{output}\""
+command_timeout_seconds = 180
 ```
 
 ## 构建
+
+### 复制到目标电脑的源文件
+
+构建所需的最小文件集合如下：
+
+```text
+Cargo.toml
+Cargo.lock
+config.toml
+src/
+scripts/convert-office.ps1
+scripts/printer-backend.ps1
+frontend/index.html
+frontend/package.json
+frontend/package-lock.json
+frontend/vite.config.js
+frontend/src/
+```
+
+如果使用便携版 SumatraPDF，再复制 `tools/SumatraPDF.exe`。`README.md` 和 `docs/` 只用于部署参考，不参与构建。
+
+以下内容不要复制；它们会在构建、安装依赖或首次运行时重新产生：
+
+```text
+target/
+frontend/node_modules/
+frontend/dist/
+data/
+frontend/data/
+.git/
+```
+
+如果目标电脑已有正式运行数据，应单独保留其 `data/`，不得用开发机数据覆盖。
 
 ### 后端检查与构建
 
@@ -273,17 +310,30 @@ temp_upload_retention_hours = 24
 
 PDF 文件会直接复制为预览文件。
 
-非 PDF 文件：
-
-- 如果配置了 `converter.office_command`，会调用外部转换命令生成 PDF。
-- 如果未配置转换命令，会生成一个占位 PDF，便于开发阶段测试流程。
+非 PDF 文件会通过 `converter.office_command` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；未配置转换命令、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
 
 真实打印：
 
-- `printer.simulate = false` 时，后端会调用 Windows `print` 命令。
-- 打印机名称来自 `config.toml` 的 `printer.name`。
-- HP LaserJet P1106 的实时状态读取可能不可靠，因此当前实现以队列状态和命令执行结果为准。
-- 打印命令失败时系统会暂停队列，管理员处理后可继续。
+- `printer.simulate = false` 时，后端通过 `scripts/printer-backend.ps1` 调用 PDF 命令行打印器，并捕获新建的 Windows 作业 ID。后端会依次查找 `tools/SumatraPDF.exe`、系统安装的 SumatraPDF、Adobe Reader，最后才尝试系统 PDF `PrintTo` 关联。
+- 调度器持续读取 `.NET System.Printing` 的具体状态和 PrintManagement 作业列表。缺纸、卡纸、脱机等状态会阻止提交后续任务，状态恢复后自动继续。
+- 打印任务只有在已观察到的 Windows 作业从队列中结束后才标为 `done`；页面文案使用“Windows 打印作业已结束”，不承诺已物理打印成功。
+- 墨粉不足仅向管理员告警，不阻塞队列；告警可确认，并在状态恢复后才允许下一次重新提示。
+- 提交程序失败或无法确认作业 ID 时会暂停队列，避免自动重试造成重复打印。
+
+打印机探测已经完成，原始 JSON 和一次性探测脚本不再随项目保留。最终依据见
+[`docs/目标打印机能力与状态测试报告.md`](docs/目标打印机能力与状态测试报告.md)。
+
+## 完成情况与验收边界
+
+需求草案和早期后端结构草案已经合并进本 README、部署说明和现有实现，因此不再单独保留。目前业务接口、用户与管理员功能、额度审核、文件转换、持久化队列、打印机状态阻塞、作业跟踪、历史统计和清理任务均已实现。
+
+仍需在目标电脑完成以下部署验收，不能仅用编译通过代替：
+
+- 安装或配置 SumatraPDF/Adobe Reader，并用普通 PDF 验证命令行打印、Windows 作业捕获和实际出纸。
+- 分别验证正常打印、缺纸暂停与补纸恢复、管理员取消作业。
+- 使用目标服务账户运行 Office 文档转换，确认 Microsoft 365 COM 权限。
+- 使用 NSSM、Windows `sc.exe` 或其他包装器完成正式服务注册和开机启动；项目本身不内置服务安装器。
+- 墨粉状态仍属于驱动估算提示，不作为可靠阻塞条件。
 
 ## 常用接口
 
@@ -299,6 +349,8 @@ PDF 文件会直接复制为预览文件。
 - `GET /api/admin/review`：管理员查看待审核任务
 - `GET /api/admin/stats`：管理员查看统计
 - `GET /api/admin/stats.csv`：管理员导出统计
+- `GET /api/admin/history`：管理员分页查看并按学号筛选全部历史
+- `POST /api/admin/printer/ack-toner`：管理员确认本轮墨粉提示
 
 ## 验证命令
 

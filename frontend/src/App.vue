@@ -31,6 +31,7 @@ const adminNav = computed(() => [
   { to: '/admin/queue', label: '队列管理', icon: Printer },
   { to: '/admin/review', label: '审核中心', icon: ShieldCheck },
   { to: '/admin/stats', label: '统计中心', icon: ClipboardList },
+  { to: '/admin/history', label: '全部历史', icon: History },
   { to: '/admin/settings', label: '系统设置', icon: SlidersHorizontal }
 ])
 

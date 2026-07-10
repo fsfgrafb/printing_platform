@@ -47,6 +47,8 @@ async function next(delta) {
           <th>状态</th>
           <th>提交时间</th>
           <th>完成时间</th>
+          <th>说明</th>
+          <th>提交 IP</th>
         </tr>
       </thead>
       <tbody>
@@ -56,6 +58,8 @@ async function next(delta) {
           <td><span class="status-pill" :class="item.status">{{ item.status }}</span></td>
           <td>{{ item.submitted_at }}</td>
           <td>{{ item.completed_at || '-' }}</td>
+          <td>{{ item.status_detail || item.review_reason || '-' }}</td>
+          <td>{{ item.submitted_ip || '-' }}</td>
         </tr>
       </tbody>
     </table>

@@ -53,6 +53,12 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
             cancelled_by TEXT,
             review_reason TEXT,
             approved_over_quota INTEGER NOT NULL DEFAULT 0,
+            windows_job_id INTEGER,
+            windows_job_name TEXT,
+            printer_submitted_at TEXT,
+            job_seen_at TEXT,
+            status_detail TEXT,
+            submitted_ip TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
         "#,
@@ -97,5 +103,53 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
         pool.execute(statement).await?;
     }
 
+    add_column_if_missing(pool, "print_tasks", "windows_job_id", "INTEGER").await?;
+    add_column_if_missing(pool, "print_tasks", "windows_job_name", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "printer_submitted_at", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "job_seen_at", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "status_detail", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "submitted_ip", "TEXT").await?;
+
     Ok(())
+}
+
+async fn add_column_if_missing(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> AppResult<()> {
+    let columns: Vec<String> =
+        sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
+            .fetch_all(pool)
+            .await?;
+    if !columns.iter().any(|name| name == column) {
+        pool.execute(format!("ALTER TABLE {table} ADD COLUMN {column} {definition}").as_str())
+            .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn migration_is_idempotent_and_adds_printer_tracking_columns() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        run(&pool).await.unwrap();
+        run(&pool).await.unwrap();
+        let columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('print_tasks')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(columns.iter().any(|column| column == "windows_job_id"));
+        assert!(columns.iter().any(|column| column == "status_detail"));
+    }
 }

@@ -6,6 +6,7 @@ pub mod queue;
 pub mod user;
 
 use axum::{
+    extract::DefaultBodyLimit,
     response::Html,
     routing::{get, post},
     Router,
@@ -25,7 +26,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/logout", post(auth::login::logout))
         .route("/auth/me", get(auth::login::me))
         .route("/auth/change-password", post(auth::login::change_password))
-        .route("/ws/queue", get(ws::handler::queue_ws))
+        .route("/ws/queue", get(ws::queue_ws))
         .merge(health::router())
         .merge(user::router())
         .merge(history::router())
@@ -33,6 +34,7 @@ pub fn router(state: AppState) -> Router {
         .merge(queue::router())
         .merge(admin::router())
         .fallback(api_not_found)
+        .layer(DefaultBodyLimit::disable())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 

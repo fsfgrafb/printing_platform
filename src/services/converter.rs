@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use tokio::fs;
+use tokio::{
+    fs,
+    time::{timeout, Duration},
+};
 
 use crate::{
     config::Config,
@@ -14,16 +17,17 @@ pub async fn prepare_preview(config: &Config, source: &Path, preview_pdf: &Path)
 
     if is_pdf(source) {
         fs::copy(source, preview_pdf).await?;
-        return Ok(count_pdf_pages(preview_pdf).unwrap_or(1));
+        return count_pdf_pages(preview_pdf);
     }
 
-    if !config.converter.office_command.trim().is_empty() {
-        run_external_converter(&config.converter.office_command, source, preview_pdf).await?;
-        return Ok(count_pdf_pages(preview_pdf).unwrap_or(1));
+    ensure_supported(source)?;
+    if config.converter.office_command.trim().is_empty() {
+        return Err(AppError::External(
+            "document conversion is not configured; set converter.office_command".to_string(),
+        ));
     }
-
-    write_placeholder_pdf(preview_pdf, source).await?;
-    Ok(1)
+    run_external_converter(config, source, preview_pdf).await?;
+    count_pdf_pages(preview_pdf)
 }
 
 fn is_pdf(path: &Path) -> bool {
@@ -33,35 +37,63 @@ fn is_pdf(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn count_pdf_pages(path: &Path) -> Option<i64> {
-    let document = lopdf::Document::load(path).ok()?;
-    Some(document.get_pages().len().max(1) as i64)
+fn count_pdf_pages(path: &Path) -> AppResult<i64> {
+    let document = lopdf::Document::load(path)
+        .map_err(|error| AppError::BadRequest(format!("invalid PDF file: {error}")))?;
+    let pages = document.get_pages().len() as i64;
+    if pages == 0 {
+        Err(AppError::BadRequest("PDF file has no pages".to_string()))
+    } else {
+        Ok(pages)
+    }
 }
 
-async fn run_external_converter(template: &str, source: &Path, output: &Path) -> AppResult<()> {
+fn ensure_supported(path: &Path) -> AppResult<()> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(
+        extension.as_str(),
+        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "jpg" | "jpeg" | "png" | "bmp" | "txt"
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!(
+            "unsupported file type: .{extension}"
+        )))
+    }
+}
+
+async fn run_external_converter(config: &Config, source: &Path, output: &Path) -> AppResult<()> {
     let input = source
         .to_str()
         .ok_or_else(|| AppError::External("source path is not valid UTF-8".to_string()))?;
     let output_path = output
         .to_str()
         .ok_or_else(|| AppError::External("preview path is not valid UTF-8".to_string()))?;
-    let command = template
+    let command_line = config
+        .converter
+        .office_command
         .replace("{input}", input)
         .replace("{output}", output_path);
 
-    let status = if cfg!(windows) {
-        tokio::process::Command::new("cmd")
-            .arg("/C")
-            .arg(command)
-            .status()
-            .await?
+    let mut child = if cfg!(windows) {
+        let mut command = tokio::process::Command::new("cmd");
+        command.arg("/C").arg(&command_line).kill_on_drop(true);
+        command
     } else {
-        tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .status()
-            .await?
+        let mut command = tokio::process::Command::new("sh");
+        command.arg("-c").arg(&command_line).kill_on_drop(true);
+        command
     };
+    let status = timeout(
+        Duration::from_secs(config.converter.command_timeout_seconds.max(5)),
+        child.status(),
+    )
+    .await
+    .map_err(|_| AppError::External("document converter timed out".to_string()))??;
 
     if status.success() && output.exists() {
         Ok(())
@@ -70,43 +102,4 @@ async fn run_external_converter(template: &str, source: &Path, output: &Path) ->
             "document converter failed with status {status}"
         )))
     }
-}
-
-async fn write_placeholder_pdf(output: &Path, source: &Path) -> AppResult<()> {
-    let name = source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("uploaded file");
-    let text = format!(
-        "Preview placeholder for {name}. Configure converter.office_command for Office/Image conversion."
-    );
-    let escaped = text
-        .replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)");
-    let stream = format!("BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET");
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_string(),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
-        format!("<< /Length {} >>\nstream\n{}\nendstream", stream.as_bytes().len(), stream),
-    ];
-    let mut pdf = String::from("%PDF-1.4\n");
-    let mut offsets = Vec::with_capacity(objects.len());
-    for (index, object) in objects.iter().enumerate() {
-        offsets.push(pdf.as_bytes().len());
-        pdf.push_str(&format!("{} 0 obj\n{}\nendobj\n", index + 1, object));
-    }
-    let xref_start = pdf.as_bytes().len();
-    pdf.push_str("xref\n0 6\n0000000000 65535 f \n");
-    for offset in offsets {
-        pdf.push_str(&format!("{offset:010} 00000 n \n"));
-    }
-    pdf.push_str(&format!(
-        "trailer << /Root 1 0 R /Size 6 >>\nstartxref\n{xref_start}\n%%EOF\n"
-    ));
-
-    fs::write(output, pdf).await?;
-    Ok(())
 }

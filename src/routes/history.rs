@@ -27,6 +27,8 @@ pub struct HistoryItem {
     pub submitted_at: String,
     pub completed_at: Option<String>,
     pub review_reason: Option<String>,
+    pub status_detail: Option<String>,
+    pub submitted_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,7 +55,7 @@ pub async fn user_history(
 
     let items = sqlx::query_as::<_, HistoryItem>(
         r#"
-        SELECT id, file_name, page_count, odd_even, status, submitted_at, completed_at, review_reason
+        SELECT id, file_name, page_count, odd_even, status, submitted_at, completed_at, review_reason, status_detail, submitted_ip
         FROM print_tasks
         WHERE user_id = ?
         ORDER BY id DESC

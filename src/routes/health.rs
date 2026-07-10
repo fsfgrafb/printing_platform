@@ -4,7 +4,7 @@ use serde::Serialize;
 use crate::{
     app::AppState,
     error::AppResult,
-    services::{printer, settings},
+    services::{printer::PrinterState, settings},
 };
 
 pub fn router() -> Router<AppState> {
@@ -17,7 +17,7 @@ pub struct HealthResponse {
     pub version: &'static str,
     pub database: &'static str,
     pub queue_paused: bool,
-    pub printer_status: String,
+    pub printer: PrinterState,
 }
 
 pub async fn health(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
@@ -30,6 +30,6 @@ pub async fn health(State(state): State<AppState>) -> AppResult<Json<HealthRespo
         version: env!("CARGO_PKG_VERSION"),
         database: "ok",
         queue_paused: settings::queue_paused(&state.pool).await?,
-        printer_status: printer::status(&state.config).await,
+        printer: state.printer_state.read().await.clone(),
     }))
 }

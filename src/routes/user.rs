@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Serialize)]
 pub struct QuotaResponse {
     pub used_today: i64,
+    pub reserved: i64,
     pub limit: i64,
     pub remaining: i64,
 }
@@ -32,10 +33,12 @@ pub async fn quota_info(
 ) -> AppResult<Json<QuotaResponse>> {
     let used_today = quota::used_today(&state.pool, user.id).await?;
     let limit = quota::daily_limit(&state.pool).await?;
+    let reserved = quota::reserved(&state.pool, user.id).await?;
     Ok(Json(QuotaResponse {
         used_today,
+        reserved,
         limit,
-        remaining: (limit - used_today).max(0),
+        remaining: (limit - used_today - reserved).max(0),
     }))
 }
 

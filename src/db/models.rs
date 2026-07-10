@@ -81,4 +81,9 @@ pub struct PrintTask {
     pub cancelled_by: Option<String>,
     pub review_reason: Option<String>,
     pub approved_over_quota: bool,
+    pub windows_job_id: Option<i64>,
+    pub windows_job_name: Option<String>,
+    pub printer_submitted_at: Option<String>,
+    pub job_seen_at: Option<String>,
+    pub status_detail: Option<String>,
 }

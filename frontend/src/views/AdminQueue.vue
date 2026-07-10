@@ -5,6 +5,7 @@ import { api } from '../api'
 
 const tasks = ref([])
 const paused = ref(false)
+const printer = ref({ blocked: false, blocking_reasons: [], warnings: [] })
 
 onMounted(load)
 
@@ -12,6 +13,7 @@ async function load() {
   const { data } = await api.get('/admin/queue')
   tasks.value = data.tasks
   paused.value = data.paused
+  printer.value = data.printer
 }
 
 async function pause() {
@@ -54,6 +56,11 @@ async function cancel(task) {
       </div>
     </header>
 
+    <div v-if="printer.blocked" class="alert-banner danger">
+      {{ printer.blocking_reasons.join('；') }}（打印机恢复后自动继续，管理员暂停状态不受影响）
+    </div>
+    <div v-if="printer.warnings?.length" class="alert-banner warning">{{ printer.warnings.join('；') }}</div>
+
     <div class="task-grid">
       <article v-for="task in tasks" :key="task.id" class="task-card">
         <div class="task-top">
@@ -62,8 +69,9 @@ async function cancel(task) {
         </div>
         <h2>{{ task.file_name }}</h2>
         <p>{{ task.owner_name }} · {{ task.page_count }} 页 · {{ task.odd_even }}</p>
+        <p v-if="task.status_detail">{{ task.status_detail }}</p>
         <button
-          v-if="['queued', 'pending_review'].includes(task.status)"
+          v-if="['queued', 'printing', 'pending_review'].includes(task.status)"
           class="icon-button danger-button"
           type="button"
           title="取消任务"

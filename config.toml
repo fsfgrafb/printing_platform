@@ -12,13 +12,18 @@ temp_upload_retention_hours = 24
 bind = "127.0.0.1:8080"
 
 [printer]
-name = "HP LaserJet P1106"
-simulate = true
+name = "HP LaserJet Professional P1106"
+simulate = false
 command_timeout_seconds = 60
+backend_script = "scripts/printer-backend.ps1"
+job_discovery_seconds = 20
+# 留空时自动查找 tools/SumatraPDF.exe、系统安装的 SumatraPDF 或 Adobe Reader。
+pdf_printer_path = ""
 
 [converter]
-# Optional command template for production conversion.
+# Command template for non-PDF conversion.
 # Placeholders: {input}, {output}
 # Example:
 # office_command = "powershell -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input {input} -Output {output}"
-office_command = ""
+office_command = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/convert-office.ps1 -Input \"{input}\" -Output \"{output}\""
+command_timeout_seconds = 180

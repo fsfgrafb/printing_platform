@@ -44,12 +44,20 @@ pub struct PrinterConfig {
     pub simulate: bool,
     #[serde(default = "default_command_timeout")]
     pub command_timeout_seconds: u64,
+    #[serde(default = "default_backend_script")]
+    pub backend_script: PathBuf,
+    #[serde(default = "default_job_discovery_seconds")]
+    pub job_discovery_seconds: u64,
+    #[serde(default)]
+    pub pdf_printer_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConverterConfig {
     #[serde(default)]
     pub office_command: String,
+    #[serde(default = "default_converter_timeout")]
+    pub command_timeout_seconds: u64,
 }
 
 impl Default for Config {
@@ -84,6 +92,9 @@ impl Default for PrinterConfig {
             name: default_printer_name(),
             simulate: true,
             command_timeout_seconds: default_command_timeout(),
+            backend_script: default_backend_script(),
+            job_discovery_seconds: default_job_discovery_seconds(),
+            pdf_printer_path: String::new(),
         }
     }
 }
@@ -92,6 +103,7 @@ impl Default for ConverterConfig {
     fn default() -> Self {
         Self {
             office_command: String::new(),
+            command_timeout_seconds: default_converter_timeout(),
         }
     }
 }
@@ -143,7 +155,7 @@ fn default_temp_upload_retention_hours() -> i64 {
 }
 
 fn default_printer_name() -> String {
-    "HP LaserJet P1106".to_string()
+    "HP LaserJet Professional P1106".to_string()
 }
 
 fn default_true() -> bool {
@@ -152,4 +164,29 @@ fn default_true() -> bool {
 
 fn default_command_timeout() -> u64 {
     60
+}
+
+fn default_backend_script() -> PathBuf {
+    PathBuf::from("scripts/printer-backend.ps1")
+}
+
+fn default_job_discovery_seconds() -> u64 {
+    20
+}
+
+fn default_converter_timeout() -> u64 {
+    180
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn repository_config_is_valid() {
+        let config: Config = toml::from_str(include_str!("../config.toml")).unwrap();
+        assert_eq!(config.printer.name, "HP LaserJet Professional P1106");
+        assert!(!config.printer.simulate);
+        assert!(config.converter.office_command.contains("{input}"));
+    }
 }

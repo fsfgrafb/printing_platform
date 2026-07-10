@@ -413,3 +413,21 @@ select {
   margin: 0;
   color: #1d6b3a;
 }
+
+.alert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #e4c56e;
+  border-radius: 8px;
+  color: #755000;
+  background: #fff8df;
+}
+
+.alert-banner.danger {
+  color: #9b1c1c;
+  border-color: #efb5b5;
+  background: #fff0f0;
+}

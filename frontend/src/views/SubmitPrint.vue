@@ -5,7 +5,7 @@ import { FilePlus2, Send, UploadCloud } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 
 const router = useRouter()
-const quota = ref({ used_today: 0, limit: 50, remaining: 50 })
+const quota = ref({ used_today: 0, reserved: 0, limit: 50, remaining: 50 })
 const adminContact = ref({ student_id: '', qq: '' })
 const uploads = ref([])
 const selectedPreview = ref('')
@@ -16,7 +16,7 @@ const error = ref('')
 const projectedPages = computed(() =>
   uploads.value.reduce((sum, item) => sum + selectedPages(item), 0)
 )
-const willOverLimit = computed(() => quota.value.used_today + projectedPages.value > quota.value.limit)
+const willOverLimit = computed(() => quota.value.used_today + quota.value.reserved + projectedPages.value > quota.value.limit)
 
 onMounted(load)
 
@@ -99,7 +99,7 @@ async function submit() {
     <header class="page-header">
       <div>
         <h1>提交打印</h1>
-        <p>今日已用 {{ quota.used_today }} / {{ quota.limit }} 页，剩余 {{ quota.remaining }} 页</p>
+        <p>今日已完成 {{ quota.used_today }} 页，队列预占 {{ quota.reserved }} 页，剩余 {{ quota.remaining }} 页</p>
       </div>
       <button class="primary-button" type="button" :disabled="!uploads.length || busy" @click="submit">
         <Send :size="18" />

@@ -18,7 +18,7 @@ use crate::{
     error::{AppError, AppResult},
     routes::{history::PageQuery, queue},
     services::{audit, import, print_service, printer, settings},
-    utils::file,
+    utils,
     ws::QueueEvent,
 };
 
@@ -37,7 +37,9 @@ pub fn router() -> Router<AppState> {
         .route("/admin/review/:task_id/reject", post(reject_review))
         .route("/admin/stats", get(stats))
         .route("/admin/stats.csv", get(stats_csv))
+        .route("/admin/history", get(admin_history))
         .route("/admin/config", get(get_config).put(update_config))
+        .route("/admin/printer/ack-toner", post(ack_toner))
         .route("/admin/transfer", post(transfer_admin))
 }
 
@@ -104,10 +106,10 @@ pub async fn import_users(
     };
     let file_name = field.file_name().unwrap_or("users.txt").to_string();
     let bytes = field.bytes().await?.to_vec();
-    let path = file::tmp_dir(&state.config).join(format!(
+    let path = utils::tmp_dir(&state.config).join(format!(
         "{}_{}",
         Uuid::new_v4(),
-        file::sanitize_filename(&file_name)
+        utils::sanitize_filename(&file_name)
     ));
     fs::write(&path, &bytes).await?;
 
@@ -151,6 +153,22 @@ pub async fn delete_user(
         return Err(AppError::Conflict(
             "admin cannot delete the current account".to_string(),
         ));
+    }
+    let _queue_guard = state.queue_lock.lock().await;
+
+    let printing_jobs = sqlx::query_as::<_, (i64, Option<i64>)>(
+        "SELECT id, windows_job_id FROM print_tasks WHERE user_id = ? AND status = 'printing'",
+    )
+    .bind(user_id)
+    .fetch_all(&state.pool)
+    .await?;
+    for (task_id, job_id) in printing_jobs {
+        let job_id = job_id.ok_or_else(|| {
+            AppError::Conflict(format!(
+                "任务 {task_id} 尚未记录 Windows 作业 ID，无法安全删除用户"
+            ))
+        })?;
+        printer::cancel_job(&state.config, job_id).await?;
     }
 
     let paths = file_paths_for_user(&state.pool, user_id).await?;
@@ -234,6 +252,7 @@ pub async fn admin_queue(
             .map(|row| queue::to_view(row, &user, true))
             .collect(),
         paused,
+        printer: state.printer_state.read().await.clone(),
     }))
 }
 
@@ -274,11 +293,41 @@ pub async fn cancel_task(
     body: Option<Json<CancelRequest>>,
 ) -> AppResult<Json<PrintTask>> {
     ensure_admin(&user)?;
+    let _queue_guard = state.queue_lock.lock().await;
     let reason = body.and_then(|Json(body)| body.reason);
-    let task = print_service::cancel_task(&state.pool, task_id, &user, reason).await?;
+    let current = load_task(&state.pool, task_id).await?;
+    let task = if current.status == "printing" {
+        let job_id = current.windows_job_id.ok_or_else(|| {
+            AppError::Conflict(
+                "该任务尚未记录 Windows 作业 ID，无法安全取消；请先检查系统打印队列".to_string(),
+            )
+        })?;
+        printer::cancel_job(&state.config, job_id).await?;
+        sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, status_detail = 'Windows 作业已取消' WHERE id = ? AND status = 'printing'")
+            .bind(reason).bind(task_id).execute(&state.pool).await?;
+        if let Some(preview) = current.preview_path.as_deref() {
+            if let Some(parent) = std::path::Path::new(preview).parent() {
+                let _ = fs::remove_file(parent.join(format!("print-task-{task_id}.pdf"))).await;
+            }
+        }
+        load_task(&state.pool, task_id).await?
+    } else {
+        print_service::cancel_task(&state.pool, task_id, &user, reason).await?
+    };
     audit::log(&state.pool, Some(user.id), "admin.tasks.cancel", &task).await?;
     state.broadcaster.send(QueueEvent::QueueChanged);
     Ok(Json(task))
+}
+
+async fn load_task(pool: &sqlx::SqlitePool, task_id: i64) -> AppResult<PrintTask> {
+    sqlx::query_as::<_, PrintTask>(
+        r#"SELECT id, user_id, file_name, stored_path, preview_path, page_count, odd_even,
+                  status, submitted_at, completed_at, cancelled_by, review_reason, approved_over_quota,
+                  windows_job_id, windows_job_name, printer_submitted_at, job_seen_at, status_detail
+           FROM print_tasks WHERE id = ?"#,
+    )
+    .bind(task_id).fetch_optional(pool).await?
+    .ok_or_else(|| AppError::NotFound("task not found".to_string()))
 }
 
 pub async fn review_tasks(
@@ -289,7 +338,7 @@ pub async fn review_tasks(
     let rows = sqlx::query_as::<_, queue::QueueRow>(
         r#"
         SELECT t.id, t.user_id, u.student_id, t.file_name, t.page_count, t.odd_even,
-               t.status, t.submitted_at, t.review_reason
+               t.status, t.submitted_at, t.review_reason, t.status_detail, t.windows_job_id
         FROM print_tasks t
         JOIN users u ON u.id = t.user_id
         WHERE t.status = 'pending_review'
@@ -393,6 +442,72 @@ pub struct StatRow {
     pub total_tasks: i64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AdminHistoryQuery {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+    pub student_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AdminHistoryItem {
+    pub id: i64,
+    pub student_id: String,
+    pub file_name: String,
+    pub page_count: i64,
+    pub status: String,
+    pub submitted_at: String,
+    pub completed_at: Option<String>,
+    pub submitted_ip: Option<String>,
+    pub status_detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminHistoryResponse {
+    pub items: Vec<AdminHistoryItem>,
+    pub page: i64,
+    pub per_page: i64,
+    pub total: i64,
+}
+
+pub async fn admin_history(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Query(query): Query<AdminHistoryQuery>,
+) -> AppResult<Json<AdminHistoryResponse>> {
+    ensure_admin(&user)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let per_page = query.per_page.unwrap_or(50).clamp(1, 200);
+    let offset = (page - 1) * per_page;
+    let student_id = query
+        .student_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM print_tasks t JOIN users u ON u.id = t.user_id WHERE (? IS NULL OR u.student_id = ?)",
+    )
+    .bind(&student_id).bind(&student_id).fetch_one(&state.pool).await?;
+    let items = sqlx::query_as::<_, AdminHistoryItem>(
+        r#"SELECT t.id, u.student_id, t.file_name, t.page_count, t.status, t.submitted_at,
+                  t.completed_at, t.submitted_ip, t.status_detail
+           FROM print_tasks t JOIN users u ON u.id = t.user_id
+           WHERE (? IS NULL OR u.student_id = ?)
+           ORDER BY t.id DESC LIMIT ? OFFSET ?"#,
+    )
+    .bind(&student_id)
+    .bind(&student_id)
+    .bind(per_page)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(AdminHistoryResponse {
+        items,
+        page,
+        per_page,
+        total,
+    }))
+}
+
 pub async fn stats(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -463,8 +578,7 @@ pub struct ConfigResponse {
     pub admin_qq: String,
     pub admin_student_id: String,
     pub queue_paused: bool,
-    pub printer_status: String,
-    pub install_hint: &'static str,
+    pub printer: crate::services::printer::PrinterState,
 }
 
 pub async fn get_config(
@@ -477,9 +591,18 @@ pub async fn get_config(
         admin_qq: settings::get_or(&state.pool, "admin_qq", "").await?,
         admin_student_id: settings::get_or(&state.pool, "admin_student_id", "").await?,
         queue_paused: settings::queue_paused(&state.pool).await?,
-        printer_status: printer::status(&state.config).await,
-        install_hint: crate::utils::windows_service::install_hint(),
+        printer: state.printer_state.read().await.clone(),
     }))
+}
+
+pub async fn ack_toner(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<serde_json::Value>> {
+    ensure_admin(&user)?;
+    let mut printer = state.printer_state.write().await;
+    printer.toner_alert_acknowledged = true;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -583,18 +706,19 @@ pub async fn transfer_admin(
 async fn file_paths_for_user(pool: &sqlx::SqlitePool, user_id: i64) -> AppResult<Vec<PathBuf>> {
     #[derive(sqlx::FromRow)]
     struct PathRow {
+        id: i64,
         stored_path: Option<String>,
         preview_path: Option<String>,
     }
 
     let task_paths = sqlx::query_as::<_, PathRow>(
-        "SELECT stored_path, preview_path FROM print_tasks WHERE user_id = ?",
+        "SELECT id, stored_path, preview_path FROM print_tasks WHERE user_id = ?",
     )
     .bind(user_id)
     .fetch_all(pool)
     .await?;
     let upload_paths = sqlx::query_as::<_, PathRow>(
-        "SELECT stored_path, preview_path FROM temp_uploads WHERE user_id = ?",
+        "SELECT -1 AS id, stored_path, preview_path FROM temp_uploads WHERE user_id = ?",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -603,8 +727,22 @@ async fn file_paths_for_user(pool: &sqlx::SqlitePool, user_id: i64) -> AppResult
     Ok(task_paths
         .into_iter()
         .chain(upload_paths)
-        .flat_map(|row| [row.stored_path, row.preview_path])
+        .flat_map(|row| {
+            let spool = (row.id > 0)
+                .then(|| {
+                    row.preview_path.as_deref().and_then(|preview| {
+                        PathBuf::from(preview)
+                            .parent()
+                            .map(|parent| parent.join(format!("print-task-{}.pdf", row.id)))
+                    })
+                })
+                .flatten();
+            [
+                row.stored_path.map(PathBuf::from),
+                row.preview_path.map(PathBuf::from),
+                spool,
+            ]
+        })
         .flatten()
-        .map(PathBuf::from)
         .collect())
 }
