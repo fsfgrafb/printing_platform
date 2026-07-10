@@ -92,6 +92,12 @@ function addFiles(fileList) {
   }
 }
 
+function patchUpload(localId, patch) {
+  const index = uploads.value.findIndex(candidate => candidate.local_id === localId)
+  if (index === -1) return
+  uploads.value.splice(index, 1, { ...uploads.value[index], ...patch })
+}
+
 async function uploadOne(item, source) {
   const formData = new FormData()
   formData.append('files', source)
@@ -106,12 +112,14 @@ async function uploadOne(item, source) {
       await deleteTemporaryUpload(uploaded.temp_id)
       return
     }
-    Object.assign(item, uploaded, { status: 'ready', controller: null })
+    patchUpload(item.local_id, { ...uploaded, status: 'ready', controller: null })
   } catch (err) {
     if (item.removed || err?.code === 'ERR_CANCELED') return
-    item.status = 'error'
-    item.error = unwrapError(err)
-    item.controller = null
+    patchUpload(item.local_id, {
+      status: 'error',
+      error: unwrapError(err),
+      controller: null
+    })
   }
 }
 
