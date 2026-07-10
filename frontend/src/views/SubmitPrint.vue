@@ -1,10 +1,13 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CircleAlert, Eye, LoaderCircle, Send, UploadCloud, X } from '@lucide/vue'
+import { useRouter } from 'vue-router'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 
+const router = useRouter()
 const quota = ref({ used_today: 0, reserved: 0, limit: 50, remaining: 50 })
+const quotaLoaded = ref(false)
 const adminContact = ref({ student_id: '', qq: '' })
 const uploads = ref([])
 const previewItem = ref(null)
@@ -22,6 +25,7 @@ const projectedPages = computed(() =>
 )
 const willOverLimit = computed(() => projectedPages.value > quota.value.remaining)
 const canSubmit = computed(() => readyUploads.value.length > 0 && !isConverting.value && !submitting.value)
+const previewUrl = computed(() => previewItem.value ? `${previewItem.value.preview_url}#zoom=100` : '')
 const quotaGreenWidth = computed(() => {
   if (quota.value.limit <= 0) return 0
   return Math.max(0, quota.value.remaining - projectedPages.value) / quota.value.limit * 100
@@ -43,15 +47,33 @@ onUnmounted(() => {
 
 async function load() {
   try {
-    const [quotaRes, contactRes] = await Promise.all([
+    const [quotaRes, contactRes, uploadsRes] = await Promise.all([
       api.get('/user/quota'),
-      api.get('/user/admin-contact')
+      api.get('/user/admin-contact'),
+      api.get('/print/uploads')
     ])
     quota.value = quotaRes.data
+    quotaLoaded.value = true
     adminContact.value = contactRes.data
+    restoreUploads(uploadsRes.data.files || [])
   } catch (err) {
     error.value = unwrapError(err)
+    quotaLoaded.value = true
   }
+}
+
+function restoreUploads(files) {
+  const loadingItems = uploads.value.filter(item => item.status === 'loading')
+  const restored = files.map(file => ({
+    ...file,
+    local_id: ++localId,
+    odd_even: 'all',
+    status: 'ready',
+    error: '',
+    removed: false,
+    controller: null
+  }))
+  uploads.value = [...restored, ...loadingItems]
 }
 
 function selectedPages(item) {
@@ -173,6 +195,7 @@ async function performSubmit() {
     uploads.value = []
     previewItem.value = null
     await load()
+    router.push('/queue')
   } catch (err) {
     error.value = unwrapError(err)
   } finally {
@@ -211,7 +234,7 @@ async function performSubmit() {
       </label>
 
       <aside class="submission-sidebar">
-        <div class="quota-progress-card" :class="{ danger: willOverLimit }">
+        <div v-if="quotaLoaded" class="quota-progress-card" :class="{ danger: willOverLimit }">
           <div class="quota-progress-heading">
             <span>今日额度</span>
             <strong>{{ quota.remaining }}/{{ quota.limit }} 页</strong>
@@ -223,6 +246,13 @@ async function performSubmit() {
           <div class="quota-legend">
             <span v-if="projectedPages"><i class="pending-dot"></i>本次文件 {{ projectedPages }} 页</span>
           </div>
+        </div>
+        <div v-else class="quota-progress-card quota-loading">
+          <div class="quota-progress-heading">
+            <span>今日额度</span>
+            <strong>加载中</strong>
+          </div>
+          <div class="quota-track"></div>
         </div>
 
         <div class="upload-list">
@@ -271,7 +301,7 @@ async function performSubmit() {
           <strong :title="previewItem.original_name">{{ previewItem.original_name }}</strong>
           <button class="icon-button" type="button" title="关闭预览" @click="previewItem = null"><X :size="18" /></button>
         </header>
-        <iframe :src="previewItem.preview_url" title="PDF 预览"></iframe>
+        <iframe :src="previewUrl" title="PDF 预览"></iframe>
       </section>
     </div>
 

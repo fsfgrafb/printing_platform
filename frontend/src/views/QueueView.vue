@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Check, ChevronLeft, ChevronRight, Eye, Pause, Play, RefreshCw, Search, X } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, Eye, Pause, Play, RefreshCw, Search, X } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { session } from '../session'
@@ -122,8 +122,6 @@ async function runAction() {
       } else {
         await api.delete(`/print/tasks/${action.task.id}`)
       }
-    } else if (action.type === 'reject') {
-      await api.post(`/admin/review/${action.task.id}/reject`, { reason: actionValue.value || null })
     }
     pendingAction.value = null
     await load()
@@ -131,15 +129,6 @@ async function runAction() {
     error.value = unwrapError(err)
   } finally {
     actionBusy.value = false
-  }
-}
-
-async function approve(task) {
-  try {
-    await api.post(`/admin/review/${task.id}/approve`)
-    await load()
-  } catch (err) {
-    error.value = unwrapError(err)
   }
 }
 
@@ -259,10 +248,6 @@ function rangeLabel(range) {
           <button v-if="task.preview_url" class="ghost-button" type="button" @click="previewTask = task">
             <Eye :size="18" /><span>预览最终 PDF</span>
           </button>
-          <template v-if="isAdmin && task.status === 'pending_review'">
-            <button class="primary-button" type="button" @click="approve(task)"><Check :size="18" />同意</button>
-            <button class="ghost-button danger-text" type="button" @click="requestAction('reject', task)"><X :size="18" />拒绝</button>
-          </template>
           <button
             v-if="(isAdmin && ['queued', 'printing', 'pending_review'].includes(task.status)) || (task.mine && ['queued', 'pending_review'].includes(task.status))"
             class="ghost-button danger-text"
@@ -292,17 +277,17 @@ function rangeLabel(range) {
           <strong>{{ previewTask.file_name }}</strong>
           <button class="icon-button" type="button" title="关闭预览" @click="previewTask = null"><X :size="18" /></button>
         </header>
-        <iframe :src="previewTask.preview_url" title="最终打印 PDF 预览"></iframe>
+        <iframe :src="`${previewTask.preview_url}#zoom=100`" title="最终打印 PDF 预览"></iframe>
       </section>
     </div>
 
     <ConfirmDialog
       v-if="pendingAction"
-      :title="pendingAction.type === 'reject' ? '拒绝打印请求' : '取消打印任务'"
+      title="取消打印任务"
       :message="`任务 #${pendingAction.task.id} · ${pendingAction.task.file_name || '未公开文件名'}`"
-      :confirm-text="pendingAction.type === 'reject' ? '确认拒绝' : '确认取消'"
+      confirm-text="确认取消"
       :danger="true"
-      :input-label="isAdmin ? (pendingAction.type === 'reject' ? '拒绝原因（可选）' : '取消原因（可选）') : ''"
+      :input-label="isAdmin ? '取消原因（可选）' : ''"
       :input-value="actionValue"
       :busy="actionBusy"
       @update:input-value="actionValue = $event"

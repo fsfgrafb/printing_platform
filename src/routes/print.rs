@@ -25,12 +25,42 @@ use crate::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/print/uploads", get(list_uploads))
         .route("/print/upload", post(upload))
         .route("/print/uploads/:temp_id", delete(remove_upload))
         .route("/print/preview/:temp_id", get(preview))
         .route("/print/tasks/:task_id/preview", get(task_preview))
         .route("/print/submit", post(submit))
         .route("/print/tasks/:task_id", delete(cancel))
+}
+
+pub async fn list_uploads(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<UploadResponse>> {
+    let uploads = sqlx::query_as::<_, TempUpload>(
+        r#"
+        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, created_at
+        FROM temp_uploads
+        WHERE user_id = ?
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(user.id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(UploadResponse {
+        files: uploads
+            .into_iter()
+            .map(|upload| UploadItem {
+                preview_url: format!("/api/print/preview/{}", upload.temp_id),
+                temp_id: upload.temp_id,
+                original_name: upload.original_name,
+                page_count: upload.page_count,
+            })
+            .collect(),
+    }))
 }
 
 #[derive(Debug, Serialize)]

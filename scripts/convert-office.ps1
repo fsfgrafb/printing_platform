@@ -103,59 +103,6 @@ switch ($extension) {
         }
     }
     { $_ -in ".jpg", ".jpeg", ".png", ".bmp" } {
-        # The target printer is monochrome. Build a grayscale bitmap first so
-        # the preview PDF is exactly the tonal version that will be submitted.
-        Add-Type -AssemblyName System.Drawing
-        $sourceImage = [System.Drawing.Image]::FromFile($resolvedInputPath)
-        $imageWidth = $sourceImage.Width
-        $imageHeight = $sourceImage.Height
-        $grayPath = [System.IO.Path]::Combine(
-            [System.IO.Path]::GetTempPath(),
-            "print-server-$([System.Guid]::NewGuid()).png"
-        )
-        try {
-            $grayBitmap = New-Object System.Drawing.Bitmap($imageWidth, $imageHeight)
-            try {
-                $graphics = [System.Drawing.Graphics]::FromImage($grayBitmap)
-                try {
-                    $matrix = New-Object System.Drawing.Imaging.ColorMatrix
-                    $matrix.Matrix00 = 0.299
-                    $matrix.Matrix01 = 0.299
-                    $matrix.Matrix02 = 0.299
-                    $matrix.Matrix10 = 0.587
-                    $matrix.Matrix11 = 0.587
-                    $matrix.Matrix12 = 0.587
-                    $matrix.Matrix20 = 0.114
-                    $matrix.Matrix21 = 0.114
-                    $matrix.Matrix22 = 0.114
-                    $attributes = New-Object System.Drawing.Imaging.ImageAttributes
-                    try {
-                        $attributes.SetColorMatrix($matrix)
-                        $destination = New-Object System.Drawing.Rectangle(0, 0, $imageWidth, $imageHeight)
-                        $graphics.DrawImage(
-                            $sourceImage,
-                            $destination,
-                            0,
-                            0,
-                            $imageWidth,
-                            $imageHeight,
-                            [System.Drawing.GraphicsUnit]::Pixel,
-                            $attributes
-                        )
-                    } finally {
-                        $attributes.Dispose()
-                    }
-                } finally {
-                    $graphics.Dispose()
-                }
-                $grayBitmap.Save($grayPath, [System.Drawing.Imaging.ImageFormat]::Png)
-            } finally {
-                $grayBitmap.Dispose()
-            }
-        } finally {
-            $sourceImage.Dispose()
-        }
-
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
         try {
@@ -167,11 +114,11 @@ switch ($extension) {
                 $pageSetup.BottomMargin = 36
                 $pageSetup.LeftMargin = 36
                 $pageSetup.RightMargin = 36
-                if ($imageWidth -gt $imageHeight) {
+                $shape = $doc.InlineShapes.AddPicture($resolvedInputPath)
+                $shape.LockAspectRatio = -1
+                if ($shape.Width -gt $shape.Height) {
                     $pageSetup.Orientation = 1
                 }
-                $shape = $doc.InlineShapes.AddPicture($grayPath)
-                $shape.LockAspectRatio = -1
                 $maxWidth = $pageSetup.PageWidth - $pageSetup.LeftMargin - $pageSetup.RightMargin
                 $maxHeight = $pageSetup.PageHeight - $pageSetup.TopMargin - $pageSetup.BottomMargin
                 $scale = [Math]::Min($maxWidth / $shape.Width, $maxHeight / $shape.Height)
@@ -186,7 +133,6 @@ switch ($extension) {
             }
         } finally {
             $word.Quit()
-            Remove-Item -LiteralPath $grayPath -Force -ErrorAction SilentlyContinue
         }
     }
     ".txt" {

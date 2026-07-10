@@ -199,7 +199,7 @@ button:disabled {
 }
 
 .submit-dropzone:hover {
-  box-shadow: 0 0 0 5px rgba(22, 103, 183, 0.14), 0 0 24px rgba(22, 103, 183, 0.16);
+  box-shadow: 0 14px 46px rgba(22, 103, 183, 0.16), 0 0 70px rgba(22, 103, 183, 0.18);
 }
 
 .submit-dropzone.dragging {
@@ -309,6 +309,15 @@ button:disabled {
 
 .quota-progress-card.danger strong {
   color: #9a4d00;
+}
+
+.quota-loading {
+  border-color: #e1e6ef;
+  background: #ffffff;
+}
+
+.quota-loading strong {
+  color: #687386;
 }
 
 .upload-list {
@@ -432,7 +441,7 @@ button:disabled {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 34px;
+  padding: 18px;
   background: rgba(12, 20, 34, 0.62);
   backdrop-filter: blur(3px);
 }
@@ -440,8 +449,8 @@ button:disabled {
 .preview-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1100px, 88vw);
-  height: 90vh;
+  width: min(1500px, 96vw);
+  height: 94vh;
   overflow: hidden;
   border-radius: 10px;
   background: #ffffff;

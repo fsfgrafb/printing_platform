@@ -40,6 +40,21 @@ function Get-Jobs {
     })
 }
 
+function Get-PrinterOfflineFlag {
+    try {
+        $printer = Get-Printer -Name $PrinterName -ErrorAction Stop
+        foreach ($propertyName in @("WorkOffline", "IsOffline")) {
+            $property = $printer.PSObject.Properties[$propertyName]
+            if ($null -ne $property) {
+                return [bool]$property.Value
+            }
+        }
+        return ([string]$printer.PrinterStatus) -match "Offline"
+    } catch {
+        return $false
+    }
+}
+
 function Write-Result {
     param([Parameter(Mandatory)]$Value)
     [Console]::Out.WriteLine(($Value | ConvertTo-Json -Compress -Depth 6))
@@ -140,7 +155,7 @@ switch ($Action) {
             Write-Result ([ordered]@{
                 available = $true
                 status = if ($queue.QueueStatus -eq [System.Printing.PrintQueueStatus]::None) { "Normal" } else { $queue.QueueStatus.ToString() }
-                is_offline = $queue.IsOffline
+                is_offline = ($queue.IsOffline -or (Get-PrinterOfflineFlag))
                 is_paused = $queue.IsPaused
                 is_printing = $queue.IsPrinting
                 is_processing = $queue.IsProcessing
@@ -164,10 +179,11 @@ switch ($Action) {
         } catch {
             $printer = Get-Printer -Name $PrinterName -ErrorAction Stop
             $status = [string]$printer.PrinterStatus
+            $offline = Get-PrinterOfflineFlag
             Write-Result ([ordered]@{
                 available = $true
                 status = $status
-                is_offline = $status -match "Offline"
+                is_offline = ($offline -or ($status -match "Offline"))
                 is_paused = $status -match "Paused"
                 is_in_error = $status -match "Error"
                 is_not_available = $status -match "NotAvailable"
