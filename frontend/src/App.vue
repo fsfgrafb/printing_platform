@@ -31,7 +31,6 @@ const nav = computed(() => [
 const adminNav = computed(() => [
   { to: '/admin/users', label: '用户管理', icon: Users },
   { to: '/admin/review', label: '审核中心', icon: ShieldCheck, badge: reviewCount.value },
-  { to: '/admin/stats', label: '统计中心', icon: ClipboardList },
   { to: '/admin/settings', label: '系统设置', icon: SlidersHorizontal }
 ])
 

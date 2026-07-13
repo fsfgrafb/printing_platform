@@ -4,6 +4,23 @@ use calamine::{open_workbook_auto, Reader};
 
 use crate::error::{AppError, AppResult};
 
+const SUPPORTED_EXTENSIONS: &[&str] = &["xlsx", "xls", "xlsm", "csv", "txt"];
+
+pub fn ensure_supported_file_name(file_name: &str) -> AppResult<()> {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "不支持该用户导入文件格式，仅支持 XLSX、XLS、XLSM、CSV 和 TXT".to_string(),
+        ))
+    }
+}
+
 pub fn parse_student_ids(path: &Path, bytes: &[u8]) -> AppResult<Vec<String>> {
     let extension = path
         .extension()
@@ -32,6 +49,19 @@ pub fn parse_student_ids(path: &Path, bytes: &[u8]) -> AppResult<Vec<String>> {
     }
 
     Ok(unique)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_supported_file_name;
+
+    #[test]
+    fn import_file_name_rejects_unknown_extensions() {
+        assert!(ensure_supported_file_name("users.xlsx").is_ok());
+        assert!(ensure_supported_file_name("users.CSV").is_ok());
+        assert!(ensure_supported_file_name("users.exe").is_err());
+        assert!(ensure_supported_file_name("users").is_err());
+    }
 }
 
 fn parse_excel(path: &Path) -> AppResult<Vec<String>> {

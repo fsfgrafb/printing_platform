@@ -103,7 +103,6 @@ async function saveProfile() {
         <span>修改密码</span>
       </button>
       <p v-if="message" class="ok-text">{{ message }}</p>
-      <p v-if="error" class="error-text">{{ error }}</p>
     </section>
 
     <ConfirmDialog
@@ -121,6 +120,15 @@ async function saveProfile() {
       confirm-text="确定"
       :show-cancel="false"
       @confirm="router.replace('/login')"
+    />
+
+    <ConfirmDialog
+      v-if="error"
+      title="操作失败"
+      :message="error"
+      confirm-text="确定"
+      :show-cancel="false"
+      @confirm="error = ''"
     />
   </section>
 </template>

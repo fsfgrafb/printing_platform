@@ -11,6 +11,25 @@ use crate::{
     error::{AppError, AppResult},
 };
 
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "jpg", "jpeg", "png", "bmp", "txt",
+];
+
+pub fn ensure_supported_file_name(file_name: &str) -> AppResult<()> {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "不支持该文件格式，仅支持 PDF、Word、Excel、PPT、JPG、PNG、BMP 和 TXT".to_string(),
+        ))
+    }
+}
+
 pub async fn prepare_preview(config: &Config, source: &Path, preview_pdf: &Path) -> AppResult<i64> {
     if let Some(parent) = preview_pdf.parent() {
         fs::create_dir_all(parent).await?;
@@ -66,21 +85,7 @@ async fn count_pdf_pages_async(config: &Config, path: &Path) -> AppResult<i64> {
 }
 
 fn ensure_supported(path: &Path) -> AppResult<()> {
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if matches!(
-        extension.as_str(),
-        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "jpg" | "jpeg" | "png" | "bmp" | "txt"
-    ) {
-        Ok(())
-    } else {
-        Err(AppError::BadRequest(format!(
-            "unsupported file type: .{extension}"
-        )))
-    }
+    ensure_supported_file_name(path.to_string_lossy().as_ref())
 }
 
 async fn run_external_converter(config: &Config, source: &Path, output: &Path) -> AppResult<()> {
@@ -156,7 +161,7 @@ fn replace_placeholders(template: &str, input: &str, output: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::replace_placeholders;
+    use super::{ensure_supported_file_name, replace_placeholders};
 
     #[test]
     fn placeholders_preserve_spaces_as_part_of_one_argument() {
@@ -164,5 +169,13 @@ mod tests {
         let output = r"C:\Print Server\preview file.pdf";
         assert_eq!(replace_placeholders("{input}", input, output), input);
         assert_eq!(replace_placeholders("{output}", input, output), output);
+    }
+
+    #[test]
+    fn upload_file_name_rejects_unknown_extensions() {
+        assert!(ensure_supported_file_name("document.pdf").is_ok());
+        assert!(ensure_supported_file_name("photo.JPEG").is_ok());
+        assert!(ensure_supported_file_name("archive.zip").is_err());
+        assert!(ensure_supported_file_name("no-extension").is_err());
     }
 }

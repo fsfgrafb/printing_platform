@@ -25,8 +25,12 @@ async function load() {
 }
 
 async function approve(task) {
-  await api.post(`/admin/review/${task.id}/approve`)
-  await load()
+  try {
+    await api.post(`/admin/review/${task.id}/approve`)
+    await load()
+  } catch (err) {
+    error.value = unwrapError(err)
+  }
 }
 
 async function reject(task) {
@@ -35,9 +39,13 @@ async function reject(task) {
 }
 
 async function confirmReject() {
-  await api.post(`/admin/review/${rejecting.value.id}/reject`, { reason: reason.value || null })
-  rejecting.value = null
-  await load()
+  try {
+    await api.post(`/admin/review/${rejecting.value.id}/reject`, { reason: reason.value || null })
+    rejecting.value = null
+    await load()
+  } catch (err) {
+    error.value = unwrapError(err)
+  }
 }
 
 function rangeLabel(range) {
@@ -55,7 +63,6 @@ function rangeLabel(range) {
     </header>
 
     <p v-if="!loaded" class="loading-state">正在加载审核</p>
-    <p v-if="error" class="error-text">{{ error }}</p>
 
     <div v-if="loaded" class="task-grid">
       <article v-for="task in tasks" :key="task.id" class="task-card review-card">
@@ -88,6 +95,14 @@ function rangeLabel(range) {
       @update:input-value="reason = $event"
       @cancel="rejecting = null"
       @confirm="confirmReject"
+    />
+    <ConfirmDialog
+      v-if="error"
+      title="操作失败"
+      :message="error"
+      confirm-text="确定"
+      :show-cancel="false"
+      @confirm="error = ''"
     />
   </section>
 </template>

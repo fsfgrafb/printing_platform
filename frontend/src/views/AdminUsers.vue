@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { KeyRound, Plus, Send, Trash2, Upload } from '@lucide/vue'
+import { Download, KeyRound, Plus, Send, Trash2, Upload } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { refreshSession, session } from '../session'
@@ -18,6 +18,7 @@ const busy = ref(false)
 const loaded = ref(false)
 const error = ref('')
 const router = useRouter()
+const importExtensions = new Set(['xlsx', 'xls', 'xlsm', 'csv', 'txt'])
 
 onMounted(load)
 
@@ -46,6 +47,24 @@ async function importUsers() {
   } catch (err) {
     error.value = unwrapError(err)
   }
+}
+
+function selectImportFile(event) {
+  const selected = event.target.files?.[0] || null
+  event.target.value = ''
+  if (!selected) return
+  const extension = selected.name.split('.').pop()?.toLowerCase()
+  if (!extension || !importExtensions.has(extension)) {
+    file.value = null
+    error.value = '不支持该用户导入文件格式，仅支持 XLSX、XLS、XLSM、CSV 和 TXT'
+    return
+  }
+  error.value = ''
+  file.value = selected
+}
+
+function exportCsv() {
+  window.open('/api/admin/stats.csv', '_blank')
 }
 
 async function createUser() {
@@ -120,17 +139,20 @@ function roleLabel(user) {
           <Plus :size="18" />
           <span>新增用户</span>
         </button>
+        <button class="ghost-button" type="button" @click="exportCsv">
+          <Download :size="18" />
+          <span>导出统计</span>
+        </button>
         <label class="file-button">
           <Upload :size="18" />
           <span>{{ file ? file.name : '选择导入文件' }}</span>
-          <input type="file" accept=".xlsx,.xls,.csv,.txt" hidden @change="event => file = event.target.files[0]" />
+          <input type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt" hidden @change="selectImportFile" />
         </label>
         <button class="primary-button" type="button" :disabled="!file" @click="importUsers">导入</button>
       </div>
     </header>
 
     <p v-if="result" class="ok-text">已新增 {{ result.created.length }} 人，跳过 {{ result.skipped.length }} 人</p>
-    <p v-if="error" class="error-text">{{ error }}</p>
 
     <p v-if="!loaded" class="loading-state">正在加载用户</p>
 
@@ -148,37 +170,41 @@ function roleLabel(user) {
       </div>
     </section>
 
-    <table v-if="loaded" class="data-table">
-      <thead>
-        <tr><th>学号</th><th>角色</th><th>QQ</th><th>注册时间</th><th>最后登录</th><th></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="user in users" :key="user.id">
-          <td>{{ user.student_id }}</td>
-          <td>{{ roleLabel(user) }}</td>
-          <td>{{ user.qq || '-' }}</td>
-          <td>{{ user.created_at || '-' }}</td>
-          <td>{{ user.last_login_at || '-' }}</td>
-          <td class="row-actions">
-            <button class="icon-button" type="button" title="重置为学号密码" @click="requestAction('reset', user)">
-              <KeyRound :size="18" />
-            </button>
-            <button
-              v-if="user.id === session.user?.id"
-              class="icon-button"
-              type="button"
-              title="转让管理员"
-              @click="requestAction('transfer', user)"
-            >
-              <Send :size="18" />
-            </button>
-            <button v-else class="icon-button danger-button" type="button" title="删除用户" @click="requestAction('delete', user)">
-              <Trash2 :size="18" />
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-if="loaded" class="table-scroll">
+      <table class="data-table user-table">
+        <thead>
+          <tr><th>学号</th><th>角色</th><th>QQ</th><th>累计页数</th><th>完成任务</th><th>注册时间</th><th>最后登录</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="user in users" :key="user.id">
+            <td>{{ user.student_id }}</td>
+            <td>{{ roleLabel(user) }}</td>
+            <td>{{ user.qq || '-' }}</td>
+            <td>{{ user.total_pages }}</td>
+            <td>{{ user.total_tasks }}</td>
+            <td>{{ user.created_at || '-' }}</td>
+            <td>{{ user.last_login_at || '-' }}</td>
+            <td class="row-actions">
+              <button class="icon-button" type="button" title="重置为学号密码" @click="requestAction('reset', user)">
+                <KeyRound :size="18" />
+              </button>
+              <button
+                v-if="user.id === session.user?.id"
+                class="icon-button"
+                type="button"
+                title="转让管理员"
+                @click="requestAction('transfer', user)"
+              >
+                <Send :size="18" />
+              </button>
+              <button v-else class="icon-button danger-button" type="button" title="删除用户" @click="requestAction('delete', user)">
+                <Trash2 :size="18" />
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <ConfirmDialog
       v-if="pendingAction"
@@ -197,6 +223,15 @@ function roleLabel(user) {
       @update:input-value="transferStudentId = $event"
       @cancel="pendingAction = null"
       @confirm="confirmAction"
+    />
+
+    <ConfirmDialog
+      v-if="error"
+      title="操作失败"
+      :message="error"
+      confirm-text="确定"
+      :show-cancel="false"
+      @confirm="error = ''"
     />
   </section>
 </template>

@@ -239,9 +239,8 @@ http://127.0.0.1
 
 管理员登录后会看到额外菜单：
 
-- 用户管理：导入用户、删除用户、重置密码、转让管理员
+- 用户管理：导入用户、删除用户、重置密码、转让管理员，并查看各用户累计完成页数和任务数
 - 审核中心：同意或拒绝超额任务
-- 统计中心：查看各用户总页数和任务数，导出 CSV
 - 系统设置：修改限额和转让管理员
 
 “打印队列”向所有登录用户显示全部用户近一年的记录，并支持按学号筛选和“只看我的打印”。普通用户不能查看他人文件名、最终 PDF 预览或原始文件下载；管理员可查看全部文件名、预览并下载原始文件，并额外拥有暂停/继续队列、取消他人任务和审批操作。
@@ -278,7 +277,7 @@ Excel 导入规则：
 
 ### 导出统计
 
-进入“统计中心”点击“导出 CSV”，或直接访问：
+进入“用户管理”点击“导出统计”，或直接访问：
 
 ```text
 /api/admin/stats.csv
@@ -314,7 +313,7 @@ temp_upload_retention_hours = 24
 
 PDF 文件会直接复制为预览文件。
 
-非 PDF 文件会通过 `converter.office_program` 与 `converter.office_args` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；图片会先转换为灰度并按纸张方向等比缩放，再生成与实际黑白打印一致的 PDF 预览。未配置转换程序、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
+非 PDF 文件会通过 `converter.office_program` 与 `converter.office_args` 真实转换并再次校验 PDF 页数。内置 PowerShell 脚本支持 Word、Excel、PowerPoint、JPG/JPEG、PNG、BMP 和 TXT；图片会先转换为灰度并按纸张方向等比缩放，再生成与实际黑白打印一致的 PDF 预览。浏览器会在上传前拦截不支持的扩展名，后端也会再次校验，不能绕过页面上传未知格式。未配置转换程序、转换超时或文件类型不支持时，上传会明确失败，不会生成占位内容。
 
 真实打印：
 
@@ -364,7 +363,7 @@ Windows 还可能返回 `Active`、`Processing`、`Busy`、`Initializing`、`Wai
 - `GET /api/queue`：分页查看共享队列与历史，可传 `mine_only=true` 或 `student_id`
 - `GET /api/print/tasks/:task_id/preview`：预览最终打印 PDF（管理员或任务本人可访问）
 - `GET /api/print/tasks/:task_id/source`：下载原始上传文件（管理员或任务本人可访问）
-- `GET /api/admin/users`：管理员查看用户
+- `GET /api/admin/users`：管理员查看用户及各用户累计完成页数、任务数
 - `GET /api/admin/review`：管理员查看待审核任务
 - `GET /api/admin/stats`：管理员查看统计
 - `GET /api/admin/stats.csv`：管理员导出统计

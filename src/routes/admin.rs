@@ -88,10 +88,23 @@ pub async fn create_user(
 
 #[derive(Debug, Serialize)]
 pub struct UsersResponse {
-    pub items: Vec<UserView>,
+    pub items: Vec<AdminUserView>,
     pub page: i64,
     pub per_page: i64,
     pub total: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AdminUserView {
+    pub id: i64,
+    pub student_id: String,
+    pub role: String,
+    pub qq: Option<String>,
+    pub must_change_password: bool,
+    pub created_at: String,
+    pub last_login_at: Option<String>,
+    pub total_pages: i64,
+    pub total_tasks: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,21 +126,23 @@ pub async fn users(
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.pool)
         .await?;
-    let items = sqlx::query_as::<_, User>(
+    let items = sqlx::query_as::<_, AdminUserView>(
         r#"
-        SELECT id, student_id, password_hash, role, qq, must_change_password, created_at, last_login_at
-        FROM users
-        ORDER BY role = 'admin' DESC, student_id ASC
+        SELECT u.id, u.student_id, u.role, u.qq, u.must_change_password,
+               u.created_at, u.last_login_at,
+               COALESCE(SUM(CASE WHEN t.status = 'done' THEN t.page_count ELSE 0 END), 0) AS total_pages,
+               COALESCE(SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END), 0) AS total_tasks
+        FROM users u
+        LEFT JOIN print_tasks t ON t.user_id = u.id
+        GROUP BY u.id
+        ORDER BY u.role = 'admin' DESC, u.student_id ASC
         LIMIT ? OFFSET ?
         "#,
     )
     .bind(per_page)
     .bind(offset)
     .fetch_all(&state.pool)
-    .await?
-    .into_iter()
-    .map(UserView::from)
-    .collect();
+    .await?;
 
     Ok(Json(UsersResponse {
         items,
@@ -154,6 +169,7 @@ pub async fn import_users(
         return Err(AppError::BadRequest("missing import file".to_string()));
     };
     let file_name = field.file_name().unwrap_or("users.txt").to_string();
+    import::ensure_supported_file_name(&file_name)?;
     let bytes = field.bytes().await?.to_vec();
     let path = utils::tmp_dir(&state.config).join(format!(
         "{}_{}",

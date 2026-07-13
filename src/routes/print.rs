@@ -99,6 +99,7 @@ pub async fn upload(
         }
 
         let original_name = field.file_name().unwrap_or("upload.bin").to_string();
+        converter::ensure_supported_file_name(&original_name)?;
         let temp_id = Uuid::new_v4().to_string();
         let stored_path = next_dated_upload_path(&state.config, &original_name).await?;
         let preview_path = utils::preview_dir(&state.config).join(format!("{temp_id}.pdf"));

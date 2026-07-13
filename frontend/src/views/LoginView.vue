@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { Printer } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import { session } from '../session'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const router = useRouter()
 const studentId = ref('')
@@ -48,11 +49,19 @@ async function login() {
           密码
           <input v-model="password" type="password" autocomplete="current-password" required />
         </label>
-        <p v-if="error" class="error-text">{{ error }}</p>
         <button class="primary-button" type="submit" :disabled="loading">
           {{ loading ? '登录中' : '登录' }}
         </button>
       </form>
     </section>
+
+    <ConfirmDialog
+      v-if="error"
+      title="登录失败"
+      :message="error"
+      confirm-text="确定"
+      :show-cancel="false"
+      @confirm="error = ''"
+    />
   </main>
 </template>

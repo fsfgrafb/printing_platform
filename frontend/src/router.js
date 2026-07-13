@@ -5,7 +5,6 @@ import QueueView from './views/QueueView.vue'
 import SettingsView from './views/SettingsView.vue'
 import AdminUsers from './views/AdminUsers.vue'
 import ReviewCenter from './views/ReviewCenter.vue'
-import StatsView from './views/StatsView.vue'
 import SystemSettings from './views/SystemSettings.vue'
 import { refreshSession, session } from './session'
 
@@ -20,7 +19,7 @@ const router = createRouter({
     { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
     { path: '/admin/users', component: AdminUsers, meta: { requiresAuth: true, admin: true } },
     { path: '/admin/review', component: ReviewCenter, meta: { requiresAuth: true, admin: true } },
-    { path: '/admin/stats', component: StatsView, meta: { requiresAuth: true, admin: true } },
+    { path: '/admin/stats', redirect: '/admin/users' },
     { path: '/admin/queue', redirect: '/queue' },
     { path: '/admin/history', redirect: '/queue' },
     { path: '/admin/settings', component: SystemSettings, meta: { requiresAuth: true, admin: true } }

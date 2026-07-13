@@ -20,6 +20,10 @@ const error = ref('')
 const showOverLimitConfirm = ref(false)
 let localId = 0
 let dragDepth = 0
+const supportedExtensions = new Set([
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png', 'bmp', 'txt'
+])
+const uploadAccept = [...supportedExtensions].map(extension => `.${extension}`).join(',')
 
 const readyUploads = computed(() => uploads.value.filter(item => item.status === 'ready'))
 const isConverting = computed(() => uploads.value.some(item => item.status === 'loading'))
@@ -132,6 +136,11 @@ function addFiles(fileList) {
   error.value = ''
   message.value = ''
   for (const source of files) {
+    const extension = source.name.split('.').pop()?.toLowerCase()
+    if (!extension || !supportedExtensions.has(extension)) {
+      error.value = `不支持文件“${source.name}”的格式，仅支持 PDF、Word、Excel、PPT、JPG、PNG、BMP 和 TXT`
+      continue
+    }
     const item = {
       local_id: ++localId,
       original_name: source.name,
@@ -170,6 +179,7 @@ async function uploadOne(item, source) {
     patchUpload(item.local_id, { ...uploaded, status: 'ready', controller: null })
   } catch (err) {
     if (item.removed || err?.code === 'ERR_CANCELED') return
+    error.value = unwrapError(err)
     patchUpload(item.local_id, {
       status: 'error',
       error: unwrapError(err),
@@ -253,7 +263,6 @@ async function performSubmit() {
 
     <template v-if="!quotaLoaded">
       <p v-if="!error" class="loading-state">正在加载提交页</p>
-      <p v-else class="error-text">{{ error }}</p>
     </template>
 
     <div v-else class="submit-layout">
@@ -269,7 +278,7 @@ async function performSubmit() {
         <strong>拖拽文件到此处</strong>
         <span>或点击选择文件</span>
         <small>支持 PDF、Word、Excel、PPT、图片、TXT，可多选</small>
-        <input type="file" multiple hidden @change="pickFiles" />
+        <input type="file" :accept="uploadAccept" multiple hidden @change="pickFiles" />
       </label>
 
       <aside class="submission-sidebar">
@@ -332,7 +341,6 @@ async function performSubmit() {
         </div>
 
         <p v-if="message" class="ok-text">{{ message }}</p>
-        <p v-if="error" class="error-text">{{ error }}</p>
       </aside>
     </div>
 
@@ -354,6 +362,15 @@ async function performSubmit() {
       :busy="submitting"
       @cancel="showOverLimitConfirm = false"
       @confirm="performSubmit"
+    />
+
+    <ConfirmDialog
+      v-if="error"
+      title="操作失败"
+      :message="error"
+      confirm-text="确定"
+      :show-cancel="false"
+      @confirm="error = ''"
     />
   </section>
 </template>

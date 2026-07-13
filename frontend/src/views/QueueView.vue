@@ -134,18 +134,30 @@ async function runAction() {
 }
 
 async function pauseQueue() {
-  await api.post('/admin/queue/pause')
-  await load()
+  try {
+    await api.post('/admin/queue/pause')
+    await load()
+  } catch (err) {
+    error.value = unwrapError(err)
+  }
 }
 
 async function resumeQueue() {
-  await api.post('/admin/queue/resume')
-  await load()
+  try {
+    await api.post('/admin/queue/resume')
+    await load()
+  } catch (err) {
+    error.value = unwrapError(err)
+  }
 }
 
 async function acknowledgeToner() {
-  await api.post('/admin/printer/ack-toner')
-  await load()
+  try {
+    await api.post('/admin/printer/ack-toner')
+    await load()
+  } catch (err) {
+    error.value = unwrapError(err)
+  }
 }
 
 function closeOnEscape(event) {
@@ -270,7 +282,6 @@ function rangeLabel(range) {
         <button class="icon-button" type="button" title="下一页" :disabled="page * perPage >= total" @click="move(1)"><ChevronRight :size="18" /></button>
       </div>
     </footer>
-    <p v-if="error" class="error-text">{{ error }}</p>
 
     <div v-if="previewTask" class="preview-modal" role="dialog" aria-modal="true" @click.self="previewTask = null">
       <section class="preview-dialog">
@@ -294,6 +305,14 @@ function rangeLabel(range) {
       @update:input-value="actionValue = $event"
       @cancel="pendingAction = null"
       @confirm="runAction"
+    />
+    <ConfirmDialog
+      v-if="error"
+      title="操作失败"
+      :message="error"
+      confirm-text="确定"
+      :show-cancel="false"
+      @confirm="error = ''"
     />
   </section>
 </template>

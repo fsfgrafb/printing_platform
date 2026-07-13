@@ -747,6 +747,14 @@ select {
   color: #687386;
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
+.user-table {
+  min-width: 980px;
+}
+
 .loading-state {
   display: grid;
   place-items: center;
