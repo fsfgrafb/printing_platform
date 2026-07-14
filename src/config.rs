@@ -131,7 +131,7 @@ fn default_bind() -> String {
 }
 
 fn default_database_url() -> String {
-    "sqlite://data/print-server.db".to_string()
+    "sqlite://data/printing_platform.db".to_string()
 }
 
 fn default_data_dir() -> PathBuf {

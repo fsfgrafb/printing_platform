@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn placeholders_preserve_spaces_as_part_of_one_argument() {
         let input = r"C:\Users\ACM User\input file.docx";
-        let output = r"C:\Print Server\preview file.pdf";
+        let output = r"C:\Printing Platform\preview file.pdf";
         assert_eq!(replace_placeholders("{input}", input, output), input);
         assert_eq!(replace_placeholders("{output}", input, output), output);
     }
