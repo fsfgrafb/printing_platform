@@ -1,5 +1,5 @@
 # SQLite database URL. The parent directory is created during startup.
-database_url = "sqlite://data/print-server.db"
+database_url = "sqlite://data/printing_platform.db"
 data_dir = "data"
 initial_admin_student_id = "admin"
 session_days = 365

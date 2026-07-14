@@ -24,7 +24,7 @@ $env:PATH='C:\Program Files\nodejs;' + $env:PATH
 主要配置文件是 `config.toml`：
 
 ```toml
-database_url = "sqlite://data/print-server.db"
+database_url = "sqlite://data/printing_platform.db"
 data_dir = "data"
 initial_admin_student_id = "admin"
 session_days = 365
@@ -109,7 +109,7 @@ cargo build --release
 构建产物位于：
 
 ```powershell
-target\release\print-server.exe
+target\release\printing_platform.exe
 ```
 
 ### 前端依赖与构建
@@ -175,7 +175,7 @@ cargo build --release
 启动服务：
 
 ```powershell
-.\target\release\print-server.exe
+.\target\release\printing_platform.exe
 ```
 
 另开终端启动前端静态服务：
@@ -197,7 +197,7 @@ http://10.18.47.101
 http://127.0.0.1
 ```
 
-生产环境建议将 `print-server.exe` 注册为 Windows 服务，并把工作目录设置为项目根目录。前端可使用 `npm run preview` 临时运行在 `80` 端口；长期运行更建议使用 IIS、Nginx 或其他静态文件服务器占用 `80` 端口，并把 `/api` 反向代理到 `http://127.0.0.1:8080`。
+生产环境建议将 `printing_platform.exe` 注册为 Windows 服务，并把工作目录设置为项目根目录。前端可使用 `npm run preview` 临时运行在 `80` 端口；长期运行更建议使用 IIS、Nginx 或其他静态文件服务器占用 `80` 端口，并把 `/api` 反向代理到 `http://127.0.0.1:8080`。
 
 ## 首次使用
 
@@ -292,7 +292,7 @@ Excel 导入规则：
 - `data/uploads/` 保存原始上传文件
 - `data/previews/` 保存用于预览和打印的 PDF
 - `data/tmp/` 保存导入等临时文件
-- `data/print-server.db` 为 SQLite 数据库
+- `data/printing_platform.db` 为 SQLite 数据库
 
 自动清理策略：
 

@@ -21,7 +21,7 @@ async fn main() -> AppResult<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "print_server=info,tower_http=info,axum=info".into()),
+                .unwrap_or_else(|_| "printing_platform=info,tower_http=info,axum=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -39,7 +39,7 @@ async fn main() -> AppResult<()> {
 
     let app = routes::router(state.clone());
     let listener = TcpListener::bind(&state.config.server.bind).await?;
-    info!("print server listening on {}", state.config.server.bind);
+    info!("printing platform listening on {}", state.config.server.bind);
 
     axum::serve(
         listener,
