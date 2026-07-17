@@ -4,19 +4,17 @@ import { CircleAlert, Eye, LoaderCircle, Send, UploadCloud, X } from '@lucide/vu
 import { useRouter } from 'vue-router'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { showError, showSuccess } from '../notification'
 
 const router = useRouter()
 const quota = ref({ used_today: 0, reserved: 0, limit: 50, remaining: 50 })
-const quotaLoaded = ref(false)
 const submitStats = ref(null)
-const submitStatsLoaded = ref(false)
 const adminContact = ref({ student_id: '', qq: '' })
 const uploads = ref([])
 const previewItem = ref(null)
 const submitting = ref(false)
 const dragging = ref(false)
-const message = ref('')
-const error = ref('')
+const loaded = ref(false)
 const showOverLimitConfirm = ref(false)
 let localId = 0
 let dragDepth = 0
@@ -53,6 +51,7 @@ onUnmounted(() => {
 })
 
 async function load() {
+  loaded.value = false
   try {
     const [quotaRes, contactRes, uploadsRes, statsRes] = await Promise.all([
       api.get('/user/quota'),
@@ -61,13 +60,16 @@ async function load() {
       api.get('/user/submit-stats')
     ])
     quota.value = quotaRes.data
-    quotaLoaded.value = true
     adminContact.value = contactRes.data
     submitStats.value = statsRes.data
-    submitStatsLoaded.value = true
     restoreUploads(uploadsRes.data.files || [])
+    loaded.value = true
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), {
+      title: '提交页加载失败',
+      confirmText: '重试',
+      onConfirm: load
+    })
   }
 }
 
@@ -133,12 +135,13 @@ function handleDropzoneDrop(event) {
 function addFiles(fileList) {
   const files = Array.from(fileList || [])
   if (!files.length) return
-  error.value = ''
-  message.value = ''
   for (const source of files) {
     const extension = source.name.split('.').pop()?.toLowerCase()
     if (!extension || !supportedExtensions.has(extension)) {
-      error.value = `不支持文件“${source.name}”的格式，仅支持 PDF、Word、Excel、PPT、JPG、PNG、BMP 和 TXT`
+      showError(
+        `不支持文件“${source.name}”的格式，仅支持 PDF、Word、Excel、PPT、JPG、PNG、BMP 和 TXT。`,
+        { title: '文件格式不支持' }
+      )
       continue
     }
     const item = {
@@ -179,10 +182,11 @@ async function uploadOne(item, source) {
     patchUpload(item.local_id, { ...uploaded, status: 'ready', controller: null })
   } catch (err) {
     if (item.removed || err?.code === 'ERR_CANCELED') return
-    error.value = unwrapError(err)
+    const uploadError = unwrapError(err)
+    showError(uploadError, { title: `“${source.name}”上传失败` })
     patchUpload(item.local_id, {
       status: 'error',
-      error: unwrapError(err),
+      error: uploadError,
       controller: null
     })
   }
@@ -200,7 +204,9 @@ async function deleteTemporaryUpload(tempId) {
   try {
     await api.delete(`/print/uploads/${tempId}`)
   } catch (err) {
-    if (err?.response?.status !== 404) error.value = unwrapError(err)
+    if (err?.response?.status !== 404) {
+      showError(unwrapError(err), { title: '移除上传文件失败' })
+    }
   }
 }
 
@@ -226,7 +232,6 @@ async function performSubmit() {
   showOverLimitConfirm.value = false
 
   submitting.value = true
-  error.value = ''
   try {
     await api.post('/print/submit', {
       files: readyUploads.value.map(file => ({
@@ -234,13 +239,12 @@ async function performSubmit() {
         odd_even: file.odd_even
       }))
     })
-    message.value = '任务已提交，可在打印队列中取消尚未开始的任务。'
     uploads.value = []
     previewItem.value = null
-    await load()
-    router.push('/queue')
+    showSuccess('任务已提交，可在打印队列中取消尚未开始的任务。', '提交成功')
+    await router.push('/queue')
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '提交失败' })
   } finally {
     submitting.value = false
   }
@@ -248,24 +252,24 @@ async function performSubmit() {
 </script>
 
 <template>
-  <section class="page submit-page">
+  <section v-if="!loaded" class="page page-loading-shell">
+    <p class="loading-state">正在加载提交页</p>
+  </section>
+
+  <section v-else class="page submit-page reveal-page">
     <header class="page-header">
       <div>
         <h1>提交打印</h1>
-        <p v-if="submitStatsLoaded">访问 {{ submitStats.visit_count }} 次 · 累计打印 {{ submitStats.print_total_pages }} 页</p>
+        <p>访问 {{ submitStats.visit_count }} 次 · 累计打印 {{ submitStats.print_total_pages }} 页</p>
       </div>
-      <button class="primary-button" type="button" :disabled="!canSubmit" @click="submit">
+      <button class="primary-button" type="submit" form="submit-print-form" :disabled="!canSubmit">
         <LoaderCircle v-if="submitting" class="spin" :size="18" />
         <Send v-else :size="18" />
         <span>{{ submitting ? '提交中' : '提交打印' }}</span>
       </button>
     </header>
 
-    <template v-if="!quotaLoaded">
-      <p v-if="!error" class="loading-state">正在加载提交页</p>
-    </template>
-
-    <div v-else class="submit-layout">
+    <form id="submit-print-form" class="submit-layout" @submit.prevent="submit">
       <label
         class="dropzone submit-dropzone"
         :class="{ dragging }"
@@ -282,7 +286,7 @@ async function performSubmit() {
       </label>
 
       <aside class="submission-sidebar">
-        <div v-if="quotaLoaded" class="quota-progress-card" :class="{ danger: willOverLimit }">
+        <div class="quota-progress-card" :class="{ danger: willOverLimit }">
           <div class="quota-progress-heading">
             <span>今日额度</span>
             <strong>{{ quota.remaining }}/{{ quota.limit }} 页</strong>
@@ -295,14 +299,6 @@ async function performSubmit() {
             <span v-if="projectedPages"><i class="pending-dot"></i>本次打印 {{ projectedPages }} 页</span>
           </div>
         </div>
-        <div v-else class="quota-progress-card quota-loading">
-          <div class="quota-progress-heading">
-            <span>今日额度</span>
-            <strong>加载中</strong>
-          </div>
-          <div class="quota-track"></div>
-        </div>
-
         <div class="upload-list">
           <article v-for="file in uploads" :key="file.local_id" class="upload-card">
             <div class="upload-card-heading">
@@ -310,7 +306,7 @@ async function performSubmit() {
                 class="icon-button preview-button"
                 type="button"
                 :disabled="file.status !== 'ready'"
-                :title="file.status === 'ready' ? '预览' : file.status === 'error' ? file.error : '正在生成预览'"
+                :title="file.status === 'ready' ? '预览' : file.status === 'error' ? '上传失败，请移出后重试' : '正在生成预览'"
                 @click="showPreview(file)"
               >
                 <LoaderCircle v-if="file.status === 'loading'" class="spin" :size="18" />
@@ -320,7 +316,7 @@ async function performSubmit() {
               <div class="file-details">
                 <strong :title="file.original_name">{{ file.original_name }}</strong>
                 <span v-if="file.status === 'loading'">正在上传并生成预览…</span>
-                <span v-else-if="file.status === 'error'" class="danger-text" :title="file.error">{{ file.error }}</span>
+                <span v-else-if="file.status === 'error'" class="danger-text">上传失败，请移出后重试</span>
                 <span v-else>
                   {{ file.page_count }} 页<template v-if="file.odd_even !== 'all'"> · 本次 {{ selectedPages(file) }} 页</template>
                 </span>
@@ -339,10 +335,8 @@ async function performSubmit() {
 
           <div v-if="!uploads.length" class="empty-upload-list">尚未添加文件</div>
         </div>
-
-        <p v-if="message" class="ok-text">{{ message }}</p>
       </aside>
-    </div>
+    </form>
 
     <div v-if="previewItem" class="preview-modal" role="dialog" aria-modal="true" @click.self="previewItem = null">
       <section class="preview-dialog">
@@ -362,15 +356,6 @@ async function performSubmit() {
       :busy="submitting"
       @cancel="showOverLimitConfirm = false"
       @confirm="performSubmit"
-    />
-
-    <ConfirmDialog
-      v-if="error"
-      title="操作失败"
-      :message="error"
-      confirm-text="确定"
-      :show-cancel="false"
-      @confirm="error = ''"
     />
   </section>
 </template>

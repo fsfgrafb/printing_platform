@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">ACM Print placeholder icon</title>
+  <defs>
+    <linearGradient id="background" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2383d8"/>
+      <stop offset="1" stop-color="#0f4f91"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#background)"/>
+  <path d="M20 9h24v15H20z" fill="#fff"/>
+  <path d="M16 22h32a7 7 0 0 1 7 7v16H44v10H20V45H9V29a7 7 0 0 1 7-7Z" fill="#dceeff"/>
+  <path d="M17 39h30v6h-3v10H20V45h-3z" fill="#fff"/>
+  <path d="M25 45h14v3H25zm0 6h10v3H25z" fill="#78b9ee"/>
+  <circle cx="46" cy="31" r="3" fill="#2aa66a"/>
+</svg>

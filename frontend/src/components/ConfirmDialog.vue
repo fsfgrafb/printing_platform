@@ -18,7 +18,7 @@ defineEmits(['confirm', 'cancel', 'update:inputValue'])
 
 <template>
   <div class="dialog-backdrop" role="presentation" @click.self="showCancel && $emit('cancel')">
-    <section class="confirm-dialog" role="dialog" aria-modal="true" :aria-label="title">
+    <form class="confirm-dialog" role="dialog" aria-modal="true" :aria-label="title" @submit.prevent="$emit('confirm')">
       <header>
         <strong>{{ title }}</strong>
         <button v-if="showCancel" class="icon-button" type="button" title="关闭" :disabled="busy" @click="$emit('cancel')">
@@ -32,7 +32,6 @@ defineEmits(['confirm', 'cancel', 'update:inputValue'])
           :value="inputValue"
           autofocus
           @input="$emit('update:inputValue', $event.target.value)"
-          @keyup.enter="$emit('confirm')"
         />
       </label>
       <footer>
@@ -40,13 +39,13 @@ defineEmits(['confirm', 'cancel', 'update:inputValue'])
         <button
           class="primary-button"
           :class="{ 'dialog-danger-button': danger }"
-          type="button"
+          type="submit"
+          :autofocus="!inputLabel"
           :disabled="busy || (inputRequired && !inputValue.trim())"
-          @click="$emit('confirm')"
         >
           {{ busy ? '处理中…' : confirmText }}
         </button>
       </footer>
-    </section>
+    </form>
   </div>
 </template>

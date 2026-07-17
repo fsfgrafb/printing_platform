@@ -79,8 +79,11 @@ frontend/index.html
 frontend/package.json
 frontend/package-lock.json
 frontend/vite.config.js
+frontend/public/
 frontend/src/
 ```
+
+当前站点图标使用 `frontend/public/favicon.svg` 占位。取得正式 SVG 后直接替换该文件即可，文件名和引用路径无需修改。
 
 `README.md` 和 `docs/` 只用于部署参考，不参与构建。仓库只保留源代码和配置示例，不再提交 PDF 阅读器 exe；生产机请系统安装 SumatraPDF/Adobe Reader，或在本机自行放置未入库的 `tools/SumatraPDF.exe` 并通过 `printer.pdf_printer_path` 指定。
 

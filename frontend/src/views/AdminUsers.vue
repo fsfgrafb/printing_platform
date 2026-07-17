@@ -4,48 +4,56 @@ import { useRouter } from 'vue-router'
 import { Download, KeyRound, Plus, Send, Trash2, Upload } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { showError, showNotice, showSuccess } from '../notification'
 import { refreshSession, session } from '../session'
 
 const users = ref([])
 const total = ref(0)
 const file = ref(null)
-const result = ref(null)
 const pendingAction = ref(null)
 const transferStudentId = ref('')
 const showAddUser = ref(false)
 const newStudentId = ref('')
 const busy = ref(false)
 const loaded = ref(false)
-const error = ref('')
 const router = useRouter()
 const importExtensions = new Set(['xlsx', 'xls', 'xlsm', 'csv', 'txt'])
 
 onMounted(load)
 
 async function load() {
+  loaded.value = false
   try {
     const { data } = await api.get('/admin/users', { params: { page: 1, per_page: 200 } })
     users.value = data.items
     total.value = data.total
     loaded.value = true
+    return true
   } catch (err) {
-    error.value = unwrapError(err)
-    loaded.value = true
+    showError(unwrapError(err), {
+      title: '用户列表加载失败',
+      confirmText: '重试',
+      onConfirm: load
+    })
+    return false
   }
 }
 
 async function importUsers() {
-  if (!file.value) return
-  error.value = ''
+  if (!file.value || busy.value) return
+  busy.value = true
   try {
     const formData = new FormData()
     formData.append('file', file.value)
     const { data } = await api.post('/admin/users/import', formData)
-    result.value = data
     file.value = null
-    await load()
+    if (await load()) {
+      showSuccess(`已新增 ${data.created.length} 人，跳过 ${data.skipped.length} 人。`, '导入完成')
+    }
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '用户导入失败' })
+  } finally {
+    busy.value = false
   }
 }
 
@@ -56,10 +64,9 @@ function selectImportFile(event) {
   const extension = selected.name.split('.').pop()?.toLowerCase()
   if (!extension || !importExtensions.has(extension)) {
     file.value = null
-    error.value = '不支持该用户导入文件格式，仅支持 XLSX、XLS、XLSM、CSV 和 TXT'
+    showError('仅支持 XLSX、XLS、XLSM、CSV 和 TXT 文件。', { title: '文件格式不支持' })
     return
   }
-  error.value = ''
   file.value = selected
 }
 
@@ -68,17 +75,19 @@ function exportCsv() {
 }
 
 async function createUser() {
+  if (busy.value) return
   const studentId = newStudentId.value.trim()
   if (!studentId) return
   busy.value = true
-  error.value = ''
   try {
     await api.post('/admin/users', { student_id: studentId })
     newStudentId.value = ''
     showAddUser.value = false
-    await load()
+    if (await load()) {
+      showSuccess(`账号 ${studentId} 已创建，默认密码为学号。`)
+    }
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '新增用户失败' })
   } finally {
     busy.value = false
   }
@@ -90,17 +99,20 @@ function requestAction(type, user) {
 }
 
 async function confirmAction() {
-  if (!pendingAction.value) return
+  if (!pendingAction.value || busy.value) return
   const { type, user } = pendingAction.value
   busy.value = true
-  error.value = ''
   try {
     if (type === 'reset') {
       await api.post(`/admin/users/${user.id}/reset-password`, {})
       if (user.id === session.user?.id) {
         await refreshSession()
         pendingAction.value = null
-        await router.replace('/settings')
+        showNotice({
+          title: '密码已重置',
+          message: '当前账号密码已重置为学号，请先修改密码。',
+          onConfirm: () => router.replace('/settings')
+        })
         return
       }
     } else if (type === 'delete') {
@@ -109,13 +121,23 @@ async function confirmAction() {
       await api.post('/admin/transfer', { new_admin_student_id: transferStudentId.value.trim() })
       await refreshSession()
       pendingAction.value = null
-      await router.replace('/queue')
+      showNotice({
+        title: '管理员已转让',
+        message: `管理员权限已转让给 ${transferStudentId.value.trim()}。`,
+        onConfirm: () => router.replace('/queue')
+      })
       return
     }
     pendingAction.value = null
-    await load()
+    if (await load()) {
+      showSuccess(
+        type === 'reset'
+          ? `${user.student_id} 的密码已重置为学号。`
+          : `账号 ${user.student_id} 已删除。`
+      )
+    }
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err))
   } finally {
     busy.value = false
   }
@@ -128,11 +150,15 @@ function roleLabel(user) {
 </script>
 
 <template>
-  <section class="page">
+  <section v-if="!loaded" class="page page-loading-shell">
+    <p class="loading-state">正在加载用户</p>
+  </section>
+
+  <section v-else class="page reveal-page">
     <header class="page-header">
       <div>
         <h1>用户管理</h1>
-        <p v-if="loaded">共 {{ total }} 个账号</p>
+        <p>共 {{ total }} 个账号</p>
       </div>
       <div class="button-row">
         <button class="ghost-button" type="button" @click="showAddUser = !showAddUser">
@@ -148,29 +174,27 @@ function roleLabel(user) {
           <span>{{ file ? file.name : '选择导入文件' }}</span>
           <input type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt" hidden @change="selectImportFile" />
         </label>
-        <button class="primary-button" type="button" :disabled="!file" @click="importUsers">导入</button>
+        <button class="primary-button" type="button" :disabled="!file || busy" @click="importUsers">
+          {{ busy && file ? '导入中' : '导入' }}
+        </button>
       </div>
     </header>
 
-    <p v-if="result" class="ok-text">已新增 {{ result.created.length }} 人，跳过 {{ result.skipped.length }} 人</p>
-
-    <p v-if="!loaded" class="loading-state">正在加载用户</p>
-
-    <section v-if="loaded && showAddUser" class="panel form-grid">
+    <form v-if="showAddUser" class="panel form-grid" @submit.prevent="createUser">
       <label>
         学号
-        <input v-model.trim="newStudentId" autocomplete="off" @keyup.enter="createUser" />
+        <input v-model.trim="newStudentId" autocomplete="off" />
       </label>
       <div class="button-row">
-        <button class="primary-button" type="button" :disabled="busy || !newStudentId.trim()" @click="createUser">
+        <button class="primary-button" type="submit" :disabled="busy || !newStudentId.trim()">
           <Plus :size="18" />
           <span>新增用户</span>
         </button>
         <button class="ghost-button" type="button" :disabled="busy" @click="showAddUser = false">取消</button>
       </div>
-    </section>
+    </form>
 
-    <div v-if="loaded" class="table-scroll">
+    <div class="table-scroll">
       <table class="data-table user-table">
         <thead>
           <tr><th>学号</th><th>角色</th><th>QQ</th><th>累计页数</th><th>完成任务</th><th>注册时间</th><th>最后登录</th><th></th></tr>
@@ -223,15 +247,6 @@ function roleLabel(user) {
       @update:input-value="transferStudentId = $event"
       @cancel="pendingAction = null"
       @confirm="confirmAction"
-    />
-
-    <ConfirmDialog
-      v-if="error"
-      title="操作失败"
-      :message="error"
-      confirm-text="确定"
-      :show-cancel="false"
-      @confirm="error = ''"
     />
   </section>
 </template>

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ChevronLeft, ChevronRight, Download, Eye, Pause, Play, Search, X } from '@lucide/vue'
 import { api, unwrapError } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { showError, showSuccess } from '../notification'
 import { session } from '../session'
 
 const tasks = ref([])
@@ -18,7 +19,6 @@ const previewTask = ref(null)
 const pendingAction = ref(null)
 const actionValue = ref('')
 const actionBusy = ref(false)
-const error = ref('')
 let timer = null
 let socket = null
 let reconnectTimer = null
@@ -45,7 +45,7 @@ const printerDisplay = computed(() => {
 onMounted(() => {
   stopped = false
   load()
-  timer = window.setInterval(load, 3000)
+  timer = window.setInterval(() => load({ silent: true }), 3000)
   connectSocket()
   window.addEventListener('keydown', closeOnEscape)
 })
@@ -53,7 +53,7 @@ onMounted(() => {
 function connectSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/queue`)
-  socket.onmessage = () => load()
+  socket.onmessage = () => load({ silent: true })
   socket.onerror = () => socket?.close()
   socket.onclose = () => {
     socket = null
@@ -69,7 +69,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', closeOnEscape)
 })
 
-async function load() {
+async function load({ silent = false } = {}) {
   try {
     const { data } = await api.get('/queue', {
       params: {
@@ -84,10 +84,16 @@ async function load() {
     paused.value = data.paused
     printer.value = data.printer
     loaded.value = true
-    error.value = ''
+    return true
   } catch (err) {
-    error.value = unwrapError(err)
-    loaded.value = true
+    if (!silent) {
+      showError(unwrapError(err), {
+        title: '打印队列加载失败',
+        confirmText: '重试',
+        onConfirm: load
+      })
+    }
+    return false
   }
 }
 
@@ -115,7 +121,6 @@ async function runAction() {
   const action = pendingAction.value
   if (!action) return
   actionBusy.value = true
-  error.value = ''
   try {
     if (action.type === 'cancel') {
       if (isAdmin.value) {
@@ -125,9 +130,9 @@ async function runAction() {
       }
     }
     pendingAction.value = null
-    await load()
+    if (await load()) showSuccess(`任务 #${action.task.id} 已取消。`)
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '取消任务失败' })
   } finally {
     actionBusy.value = false
   }
@@ -136,27 +141,27 @@ async function runAction() {
 async function pauseQueue() {
   try {
     await api.post('/admin/queue/pause')
-    await load()
+    if (await load()) showSuccess('打印队列已暂停。')
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '暂停队列失败' })
   }
 }
 
 async function resumeQueue() {
   try {
     await api.post('/admin/queue/resume')
-    await load()
+    if (await load()) showSuccess('打印队列已恢复。')
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '恢复队列失败' })
   }
 }
 
 async function acknowledgeToner() {
   try {
     await api.post('/admin/printer/ack-toner')
-    await load()
+    if (await load()) showSuccess('本轮打印机提示已确认。')
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '确认提示失败' })
   }
 }
 
@@ -178,7 +183,11 @@ function rangeLabel(range) {
 </script>
 
 <template>
-  <section class="page queue-page">
+  <section v-if="!loaded" class="page page-loading-shell">
+    <p class="loading-state">正在加载打印队列</p>
+  </section>
+
+  <section v-else class="page queue-page reveal-page">
     <header class="page-header">
       <div>
         <h1>打印队列</h1>
@@ -204,7 +213,7 @@ function rangeLabel(range) {
       </div>
     </header>
 
-    <section v-if="loaded" class="printer-card">
+    <section class="printer-card">
       <div class="printer-identity">
         <span class="printer-state-pill" :class="printerDisplay.tone">{{ printerDisplay.label }}</span>
         <div>
@@ -215,21 +224,10 @@ function rangeLabel(range) {
       <span class="printer-raw-status">驱动状态：{{ printer.status || '-' }}</span>
     </section>
 
-    <div v-else class="printer-card">
-      <div class="printer-identity">
-        <span class="printer-state-pill paused">Loading</span>
-        <div>
-          <strong>正在读取打印机状态</strong>
-          <span>请稍候</span>
-        </div>
-      </div>
-      <span class="printer-raw-status">驱动状态：-</span>
-    </div>
-
-    <div v-if="loaded && printer.blocked" class="alert-banner danger">
+    <div v-if="printer.blocked" class="alert-banner danger">
       打印机暂时阻塞：{{ printer.blocking_reasons.join('；') }}。故障清除后会自动继续。
     </div>
-    <div v-if="loaded && printer.warnings?.length && (!printer.toner_alert_acknowledged || !isAdmin)" class="alert-banner warning">
+    <div v-if="printer.warnings?.length && (!printer.toner_alert_acknowledged || !isAdmin)" class="alert-banner warning">
       <span>{{ printer.warnings.join('；') }}</span>
       <button v-if="isAdmin" class="ghost-button" type="button" @click="acknowledgeToner">确认提示</button>
     </div>
@@ -272,8 +270,7 @@ function rangeLabel(range) {
       </article>
     </div>
 
-    <p v-if="!loaded" class="loading-state">正在加载打印队列</p>
-    <p v-else-if="!tasks.length" class="empty-state">没有符合条件的打印记录</p>
+    <p v-if="!tasks.length" class="empty-state">没有符合条件的打印记录</p>
     <footer v-if="total > perPage" class="pagination-bar">
       <span>共 {{ total }} 条</span>
       <div class="button-row">
@@ -305,14 +302,6 @@ function rangeLabel(range) {
       @update:input-value="actionValue = $event"
       @cancel="pendingAction = null"
       @confirm="runAction"
-    />
-    <ConfirmDialog
-      v-if="error"
-      title="操作失败"
-      :message="error"
-      confirm-text="确定"
-      :show-cancel="false"
-      @confirm="error = ''"
     />
   </section>
 </template>

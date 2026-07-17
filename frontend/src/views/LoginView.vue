@@ -1,19 +1,18 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Printer } from '@lucide/vue'
 import { api, unwrapError } from '../api'
+import PasswordField from '../components/PasswordField.vue'
+import { showError } from '../notification'
 import { session } from '../session'
-import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const router = useRouter()
 const studentId = ref('')
 const password = ref('')
-const error = ref('')
 const loading = ref(false)
 
 async function login() {
-  error.value = ''
+  if (loading.value) return
   loading.value = true
   try {
     const { data } = await api.post('/auth/login', {
@@ -23,7 +22,7 @@ async function login() {
     session.user = data.user
     router.replace(data.user.must_change_password ? '/settings' : '/submit')
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '登录失败' })
   } finally {
     loading.value = false
   }
@@ -34,7 +33,7 @@ async function login() {
   <main class="login-screen">
     <section class="login-panel">
       <div class="login-brand">
-        <Printer :size="32" />
+        <img class="login-icon" src="/favicon.svg" alt="" />
         <div>
           <h1>ACM 实验室自助打印平台</h1>
         </div>
@@ -45,23 +44,11 @@ async function login() {
           学号
           <input v-model.trim="studentId" autocomplete="username" required />
         </label>
-        <label>
-          密码
-          <input v-model="password" type="password" autocomplete="current-password" required />
-        </label>
+        <PasswordField v-model="password" label="密码" autocomplete="current-password" required />
         <button class="primary-button" type="submit" :disabled="loading">
           {{ loading ? '登录中' : '登录' }}
         </button>
       </form>
     </section>
-
-    <ConfirmDialog
-      v-if="error"
-      title="登录失败"
-      :message="error"
-      confirm-text="确定"
-      :show-cancel="false"
-      @confirm="error = ''"
-    />
   </main>
 </template>

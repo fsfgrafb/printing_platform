@@ -10,7 +10,11 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    cors::CorsLayer,
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 
 use crate::{
     app::AppState,
@@ -40,6 +44,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api", api)
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
+        .route_service("/favicon.svg", ServeFile::new("frontend/dist/favicon.svg"))
         .route("/", get(spa_index))
         .fallback(spa_index)
         .with_state(state)

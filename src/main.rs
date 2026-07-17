@@ -39,7 +39,10 @@ async fn main() -> AppResult<()> {
 
     let app = routes::router(state.clone());
     let listener = TcpListener::bind(&state.config.server.bind).await?;
-    info!("printing platform listening on {}", state.config.server.bind);
+    info!(
+        "printing platform listening on {}",
+        state.config.server.bind
+    );
 
     axum::serve(
         listener,

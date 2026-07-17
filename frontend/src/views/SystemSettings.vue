@@ -3,8 +3,8 @@ import { onMounted, ref } from 'vue'
 import { Save } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { api, unwrapError } from '../api'
+import { showError, showNotice, showSuccess } from '../notification'
 import { refreshSession } from '../session'
-import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const config = ref({
   daily_limit: '50',
@@ -13,42 +13,45 @@ const config = ref({
 const transferStudentId = ref('')
 const saving = ref(false)
 const loaded = ref(false)
-const message = ref('')
-const error = ref('')
-const showSaveDialog = ref(false)
 const router = useRouter()
 
 onMounted(load)
 
 async function load() {
+  loaded.value = false
   try {
     const { data } = await api.get('/admin/config')
     config.value = data
-    error.value = ''
-  } catch (err) {
-    error.value = unwrapError(err)
-  } finally {
     loaded.value = true
+  } catch (err) {
+    showError(unwrapError(err), {
+      title: '系统设置加载失败',
+      confirmText: '重试',
+      onConfirm: load
+    })
   }
 }
 
 async function save() {
+  if (saving.value) return
   saving.value = true
-  message.value = ''
-  error.value = ''
   try {
-    await api.put('/admin/config', { key: 'daily_limit', value: String(config.value.daily_limit) })
+    const dailyLimit = Math.max(0, Number.parseInt(config.value.daily_limit, 10) || 0)
+    await api.put('/admin/config', { key: 'daily_limit', value: String(dailyLimit) })
+    config.value.daily_limit = String(dailyLimit)
     if (transferStudentId.value.trim()) {
       await api.post('/admin/transfer', { new_admin_student_id: transferStudentId.value.trim() })
       await refreshSession()
-      message.value = '已保存并转让管理员'
-      await router.replace('/queue')
+      showNotice({
+        title: '保存成功',
+        message: '系统设置已保存，管理员权限已转让。',
+        onConfirm: () => router.replace('/queue')
+      })
       return
     }
-    await load()
-    showSaveDialog.value = true
+    showSuccess('系统设置已保存。')
   } catch (err) {
-    error.value = unwrapError(err)
+    showError(unwrapError(err), { title: '保存失败' })
   } finally {
     saving.value = false
   }
@@ -57,16 +60,18 @@ async function save() {
 </script>
 
 <template>
-  <section class="page narrow-page">
+  <section v-if="!loaded" class="page page-loading-shell">
+    <p class="loading-state">正在加载系统设置</p>
+  </section>
+
+  <section v-else class="page narrow-page reveal-page">
     <header class="page-header">
       <div>
         <h1>系统设置</h1>
       </div>
     </header>
 
-    <p v-if="!loaded" class="loading-state">正在加载系统设置</p>
-
-    <section v-if="loaded" class="panel form-grid">
+    <form class="panel form-grid" @submit.prevent="save">
       <label>
         每日限额
         <input v-model.trim="config.daily_limit" type="number" min="0" />
@@ -75,28 +80,10 @@ async function save() {
         转让管理员
         <input v-model.trim="transferStudentId" placeholder="输入已有用户学号，留空不转让" />
       </label>
-      <button class="primary-button" type="button" :disabled="saving" @click="save">
+      <button class="primary-button" type="submit" :disabled="saving">
         <Save :size="18" />
         <span>{{ saving ? '保存中' : '保存' }}</span>
       </button>
-    </section>
-
-    <p v-if="message" class="ok-text">{{ message }}</p>
-    <ConfirmDialog
-      v-if="showSaveDialog"
-      title="保存成功"
-      confirm-text="确定"
-      :show-cancel="false"
-      @confirm="showSaveDialog = false"
-    />
-
-    <ConfirmDialog
-      v-if="error"
-      title="保存失败"
-      :message="error"
-      confirm-text="确定"
-      :show-cancel="false"
-      @confirm="error = ''"
-    />
+    </form>
   </section>
 </template>

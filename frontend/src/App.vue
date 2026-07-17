@@ -4,15 +4,16 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ClipboardList,
   LogOut,
-  Printer,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
   UploadCloud,
   Users
 } from '@lucide/vue'
-import { api } from './api'
-import { refreshSession, session, signOut } from './session'
+import { api, unwrapError } from './api'
+import ConfirmDialog from './components/ConfirmDialog.vue'
+import { confirmNotice, notification, showError } from './notification'
+import { session, signOut } from './session'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,9 +35,7 @@ const adminNav = computed(() => [
   { to: '/admin/settings', label: '系统设置', icon: SlidersHorizontal }
 ])
 
-onMounted(async () => {
-  await refreshSession()
-  if (!session.user && !isLogin.value) router.replace('/login')
+onMounted(() => {
   updateReviewPolling()
 })
 
@@ -46,9 +45,14 @@ watch([isAdmin, mustChangePassword], updateReviewPolling)
 
 async function logout() {
   stopReviewPolling()
-  await signOut()
-  reviewCount.value = 0
-  router.replace('/login')
+  try {
+    await signOut()
+    reviewCount.value = 0
+    router.replace('/login')
+  } catch (error) {
+    showError(unwrapError(error), { title: '退出失败' })
+    updateReviewPolling()
+  }
 }
 
 function updateReviewPolling() {
@@ -79,41 +83,75 @@ async function loadReviewCount() {
 </script>
 
 <template>
-  <RouterView v-if="isLogin" />
-
-  <div v-else class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <Printer :size="24" />
-        <div>
-          <strong>ACM Print</strong>
-          <span>{{ session.user?.student_id || '未登录' }}</span>
-        </div>
-      </div>
-
-      <nav v-if="!mustChangePassword" class="nav-group">
-        <RouterLink v-for="item in nav" :key="item.to" :to="item.to" class="nav-link" draggable="false" @dragstart.prevent>
-          <component :is="item.icon" :size="18" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </nav>
-
-      <nav v-if="isAdmin && !mustChangePassword" class="nav-group admin-nav">
-        <RouterLink v-for="item in adminNav" :key="item.to" :to="item.to" class="nav-link" draggable="false" @dragstart.prevent>
-          <component :is="item.icon" :size="18" />
-          <span>{{ item.label }}</span>
-          <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
-        </RouterLink>
-      </nav>
-
-      <button class="ghost-button logout-button" type="button" @click="logout">
-        <LogOut :size="18" />
-        <span>退出登录</span>
-      </button>
-    </aside>
-
-    <main class="main-panel">
-      <RouterView />
-    </main>
+  <div v-if="!session.ready" class="app-boot" aria-live="polite" aria-label="正在恢复登录状态">
+    <img src="/favicon.svg" alt="" />
+    <span>正在加载</span>
   </div>
+
+  <template v-else>
+    <RouterView v-if="isLogin" v-slot="{ Component, route: currentRoute }">
+      <Transition name="page" mode="out-in">
+        <div class="route-frame" :key="currentRoute.fullPath">
+          <component :is="Component" />
+        </div>
+      </Transition>
+    </RouterView>
+
+    <div v-else-if="session.user" class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-icon" src="/favicon.svg" alt="" />
+          <div>
+            <strong>ACM Print</strong>
+            <span>{{ session.user.student_id }}</span>
+          </div>
+        </div>
+
+        <nav v-if="!mustChangePassword" class="nav-group">
+          <RouterLink v-for="item in nav" :key="item.to" :to="item.to" class="nav-link" draggable="false" @dragstart.prevent>
+            <component :is="item.icon" :size="18" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </nav>
+
+        <nav v-if="isAdmin && !mustChangePassword" class="nav-group admin-nav">
+          <RouterLink v-for="item in adminNav" :key="item.to" :to="item.to" class="nav-link" draggable="false" @dragstart.prevent>
+            <component :is="item.icon" :size="18" />
+            <span>{{ item.label }}</span>
+            <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
+          </RouterLink>
+        </nav>
+
+        <button class="ghost-button logout-button" type="button" @click="logout">
+          <LogOut :size="18" />
+          <span>退出登录</span>
+        </button>
+      </aside>
+
+      <main class="main-panel">
+        <RouterView v-slot="{ Component, route: currentRoute }">
+          <Transition name="page" mode="out-in">
+            <div class="route-frame" :key="currentRoute.fullPath">
+              <component :is="Component" />
+            </div>
+          </Transition>
+        </RouterView>
+      </main>
+    </div>
+
+    <div v-else class="app-boot" aria-live="polite">
+      <img src="/favicon.svg" alt="" />
+      <span>正在返回登录页</span>
+    </div>
+
+    <ConfirmDialog
+      v-if="notification.visible"
+      :title="notification.title"
+      :message="notification.message"
+      :confirm-text="notification.confirmText"
+      :danger="notification.danger"
+      :show-cancel="false"
+      @confirm="confirmNotice"
+    />
+  </template>
 </template>
