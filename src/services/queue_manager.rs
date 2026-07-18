@@ -8,7 +8,7 @@ use crate::{
     app::AppState,
     db::models::PrintTask,
     error::{AppError, AppResult},
-    services::{printer, quota, settings},
+    services::{printer, settings},
     ws::QueueEvent,
 };
 
@@ -31,12 +31,16 @@ async fn run_once(state: &AppState) -> AppResult<()> {
     refresh_printer_state(state).await;
     let snapshot = state.printer_state.read().await.clone();
 
-    if let Some(task) = printing_task(&state.pool).await? {
+    if let Some(task) = active_task(&state.pool).await? {
         track_printing_task(state, &snapshot, task).await?;
         return Ok(());
     }
 
-    if settings::queue_paused(&state.pool).await? || snapshot.blocked {
+    if settings::queue_paused(&state.pool).await?
+        || !snapshot.available
+        || snapshot.error.is_some()
+        || snapshot.blocked
+    {
         return Ok(());
     }
 
@@ -48,12 +52,12 @@ async fn run_once(state: &AppState) -> AppResult<()> {
         return Ok(());
     };
 
-    if !mark_printing(&state.pool, task.id).await? {
+    if !mark_spooling(&state.pool, task.id).await? {
         return Ok(());
     }
     state.broadcaster.send(QueueEvent::TaskStatus {
         task_id: task.id,
-        status: "printing".into(),
+        status: "spooling".into(),
     });
     state.broadcaster.send(QueueEvent::QueueChanged);
 
@@ -65,7 +69,7 @@ async fn run_once(state: &AppState) -> AppResult<()> {
     match printer::submit_pdf(&state.config, &PathBuf::from(&preview_path), task.id).await {
         Ok(Some(job)) => {
             sqlx::query(
-                "UPDATE print_tasks SET windows_job_id = ?, windows_job_name = ?, printer_submitted_at = datetime('now'), job_seen_at = datetime('now'), status_detail = '已提交至 Windows 打印队列' WHERE id = ?",
+                "UPDATE print_tasks SET status = 'printing', windows_job_id = ?, windows_job_name = ?, printer_submitted_at = datetime('now'), job_seen_at = datetime('now'), status_detail = '已提交至系统打印队列' WHERE id = ? AND status = 'spooling'",
             )
             .bind(job.job_id).bind(job.job_name).bind(task.id).execute(&state.pool).await?;
         }
@@ -142,7 +146,7 @@ async fn track_printing_task(
                 .find(|job| job.name.to_ascii_lowercase().contains(&marker))
         });
     if let Some(job) = matching_job {
-        sqlx::query("UPDATE print_tasks SET windows_job_id = ?, windows_job_name = ?, job_seen_at = datetime('now'), status_detail = ? WHERE id = ?")
+        sqlx::query("UPDATE print_tasks SET status = 'printing', windows_job_id = ?, windows_job_name = ?, job_seen_at = datetime('now'), status_detail = ? WHERE id = ?")
             .bind(job.id).bind(&job.name).bind(format!("Windows 作业处理中：{}", job.status)).bind(task.id)
             .execute(&state.pool).await?;
         return Ok(());
@@ -174,37 +178,34 @@ async fn track_printing_task(
 
 async fn next_task(pool: &SqlitePool) -> AppResult<Option<PrintTask>> {
     let query = format!(
-        "SELECT {TASK_COLUMNS} FROM print_tasks WHERE status = 'queued' ORDER BY submitted_at ASC, id ASC LIMIT 1"
+        "SELECT {TASK_COLUMNS} FROM print_tasks WHERE status = 'queued' ORDER BY COALESCE(queued_at, submitted_at) ASC, id ASC LIMIT 1"
     );
     Ok(sqlx::query_as::<_, PrintTask>(&query)
         .fetch_optional(pool)
         .await?)
 }
 
-async fn printing_task(pool: &SqlitePool) -> AppResult<Option<PrintTask>> {
+async fn active_task(pool: &SqlitePool) -> AppResult<Option<PrintTask>> {
     let query = format!(
-        "SELECT {TASK_COLUMNS} FROM print_tasks WHERE status = 'printing' ORDER BY id ASC LIMIT 1"
+        "SELECT {TASK_COLUMNS} FROM print_tasks WHERE status IN ('spooling', 'printing') ORDER BY id ASC LIMIT 1"
     );
     Ok(sqlx::query_as::<_, PrintTask>(&query)
         .fetch_optional(pool)
         .await?)
 }
 
-async fn mark_printing(pool: &SqlitePool, task_id: i64) -> AppResult<bool> {
-    let affected = sqlx::query("UPDATE print_tasks SET status = 'printing', status_detail = '正在提交至打印机' WHERE id = ? AND status = 'queued'")
+async fn mark_spooling(pool: &SqlitePool, task_id: i64) -> AppResult<bool> {
+    let affected = sqlx::query("UPDATE print_tasks SET status = 'spooling', status_detail = '正在提交至打印机' WHERE id = ? AND status = 'queued'")
         .bind(task_id).execute(pool).await?.rows_affected();
     Ok(affected == 1)
 }
 
 async fn finish_task(pool: &SqlitePool, task: &PrintTask) -> AppResult<()> {
-    let mut tx = pool.begin().await?;
-    let affected = sqlx::query("UPDATE print_tasks SET status = 'done', completed_at = datetime('now'), status_detail = 'Windows 打印作业已结束' WHERE id = ? AND status = 'printing'")
-        .bind(task.id).execute(&mut *tx).await?.rows_affected();
-    if affected > 0 && !task.approved_over_quota {
-        quota::add_usage_tx(&mut tx, task.user_id, task.page_count).await?;
+    let affected = sqlx::query("UPDATE print_tasks SET status = 'done', completed_at = datetime('now'), status_detail = '系统打印作业已结束' WHERE id = ? AND status IN ('spooling', 'printing')")
+        .bind(task.id).execute(pool).await?.rows_affected();
+    if affected > 0 {
+        remove_spool_copy(task).await;
     }
-    tx.commit().await?;
-    remove_spool_copy(task).await;
     Ok(())
 }
 
@@ -224,8 +225,8 @@ async fn submission_failed(state: &AppState, task: &PrintTask, reason: &str) -> 
         reason, "printer submission failed; pausing queue"
     );
     settings::set_queue_paused(&state.pool, true).await?;
-    sqlx::query("UPDATE print_tasks SET status = 'queued', status_detail = ?, review_reason = ? WHERE id = ?")
-        .bind(format!("提交失败：{reason}")).bind(reason).bind(task.id).execute(&state.pool).await?;
+    sqlx::query("UPDATE print_tasks SET status = 'uncertain', status_detail = ?, review_reason = ? WHERE id = ? AND status = 'spooling'")
+        .bind(format!("提交结果不确定：{reason}")).bind(reason).bind(task.id).execute(&state.pool).await?;
     state.broadcaster.send(QueueEvent::PrinterError {
         message: reason.into(),
     });

@@ -61,7 +61,14 @@ impl IntoResponse for AppError {
             tracing::warn!(%status, error = %message, "request rejected");
         }
 
-        let body = Json(ErrorBody { error: message });
+        let public_message = if status.is_server_error() {
+            "服务器内部错误，请联系管理员".to_string()
+        } else {
+            message
+        };
+        let body = Json(ErrorBody {
+            error: public_message,
+        });
         (status, body).into_response()
     }
 }

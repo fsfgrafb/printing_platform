@@ -26,11 +26,12 @@ async fn main() -> AppResult<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = Config::load("config.toml")?;
+    let config = Config::load()?;
     utils::ensure_data_dirs(&config).await?;
 
-    let pool = db::connect(&config.database_url).await?;
+    let pool = db::connect(&config.database_url()).await?;
     db::migrate::run(&pool).await?;
+    services::settings::initialize_daily_limit(&pool, config.default_daily_limit).await?;
     auth::login::ensure_initial_admin(&pool, &config).await?;
 
     let state = AppState::new(pool, config);
@@ -40,8 +41,10 @@ async fn main() -> AppResult<()> {
     let app = routes::router(state.clone());
     let listener = TcpListener::bind(&state.config.server.bind).await?;
     info!(
-        "printing platform listening on {}",
-        state.config.server.bind
+        bind = %state.config.server.bind,
+        data_dir = %state.config.data_dir.display(),
+        simulate = state.config.printer.simulate,
+        "printing platform started"
     );
 
     axum::serve(

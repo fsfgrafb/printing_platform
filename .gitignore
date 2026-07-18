@@ -1,7 +1,5 @@
 /target/
 /data/
-/frontend/node_modules/
-/frontend/dist/
-/frontend/data/
 /tools/*.exe
+/tools/LibreOffice*/
 *.log

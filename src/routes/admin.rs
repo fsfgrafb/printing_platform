@@ -147,15 +147,13 @@ pub async fn users(
         FROM users
         WHERE (? IS NULL OR role = ?)
           AND (? IS NULL OR status = ?)
-          AND (? IS NULL OR student_id LIKE ? OR phone LIKE ? OR qq LIKE ?)
+          AND (? IS NULL OR student_id LIKE ?)
         "#,
     )
     .bind(role)
     .bind(role)
     .bind(status)
     .bind(status)
-    .bind(search.as_deref())
-    .bind(search.as_deref())
     .bind(search.as_deref())
     .bind(search.as_deref())
     .fetch_one(&state.pool)
@@ -170,7 +168,7 @@ pub async fn users(
         LEFT JOIN print_tasks t ON t.user_id = u.id
         WHERE (? IS NULL OR u.role = ?)
           AND (? IS NULL OR u.status = ?)
-          AND (? IS NULL OR u.student_id LIKE ? OR u.phone LIKE ? OR u.qq LIKE ?)
+          AND (? IS NULL OR u.student_id LIKE ?)
         GROUP BY u.id
         ORDER BY u.role = 'admin' DESC, u.student_id ASC
         LIMIT ? OFFSET ?
@@ -180,8 +178,6 @@ pub async fn users(
     .bind(role)
     .bind(status)
     .bind(status)
-    .bind(search.as_deref())
-    .bind(search.as_deref())
     .bind(search.as_deref())
     .bind(search.as_deref())
     .bind(per_page)
@@ -227,7 +223,11 @@ pub async fn import_users(
     };
     let file_name = field.file_name().unwrap_or("users.txt").to_string();
     import::ensure_supported_file_name(&file_name)?;
-    let bytes = field.bytes().await?.to_vec();
+    let bytes = field.bytes().await?;
+    if bytes.len() as u64 > state.config.limits.max_import_bytes {
+        return Err(AppError::BadRequest("用户导入文件过大".into()));
+    }
+    let bytes = bytes.to_vec();
     let path = utils::tmp_dir(&state.config).join(format!(
         "{}_{}",
         Uuid::new_v4(),
@@ -235,30 +235,43 @@ pub async fn import_users(
     ));
     fs::write(&path, &bytes).await?;
 
-    let student_ids = import::parse_student_ids(&path, &bytes)?;
+    let student_ids = match import::parse_student_ids(&path, &bytes) {
+        Ok(ids) => ids,
+        Err(error) => {
+            let _ = fs::remove_file(&path).await;
+            return Err(error);
+        }
+    };
+    let _ = fs::remove_file(&path).await;
     let mut created = Vec::new();
     let mut skipped = Vec::new();
-
-    for student_id in student_ids {
-        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE student_id = ?")
-            .bind(&student_id)
-            .fetch_one(&state.pool)
-            .await?;
-        if exists > 0 {
-            skipped.push(student_id);
-            continue;
-        }
-
-        let hash = session::hash_password(&student_id)?;
-        sqlx::query(
-            "INSERT INTO users (student_id, password_hash, role, must_change_password) VALUES (?, ?, 'user', 1)",
+    let hashes = tokio::task::spawn_blocking(move || {
+        student_ids
+            .into_iter()
+            .map(|student_id| {
+                let hash = session::hash_password(&student_id)?;
+                Ok((student_id, hash))
+            })
+            .collect::<AppResult<Vec<_>>>()
+    })
+    .await
+    .map_err(|error| AppError::External(format!("用户导入任务失败：{error}")))??;
+    let mut tx = state.pool.begin().await?;
+    for (student_id, hash) in hashes {
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO users (student_id, password_hash, role, must_change_password) VALUES (?, ?, 'user', 1)",
         )
         .bind(&student_id)
         .bind(hash)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
-        created.push(student_id);
+        if result.rows_affected() == 1 {
+            created.push(student_id);
+        } else {
+            skipped.push(student_id);
+        }
     }
+    tx.commit().await?;
 
     let response = ImportResponse { created, skipped };
     audit::log(&state.pool, Some(user.id), "admin.users.import", &response).await?;
@@ -344,6 +357,7 @@ pub async fn reset_password(
         .bind(user_id)
         .execute(&state.pool)
         .await?;
+    session::delete_user_sessions(&state.pool, user_id).await?;
 
     audit::log(
         &state.pool,
@@ -427,6 +441,13 @@ pub async fn pause_queue(
 ) -> AppResult<Json<serde_json::Value>> {
     ensure_admin(&user)?;
     settings::set_queue_paused(&state.pool, true).await?;
+    audit::log(
+        &state.pool,
+        Some(user.id),
+        "admin.queue.pause",
+        &serde_json::json!({}),
+    )
+    .await?;
     state
         .broadcaster
         .send(QueueEvent::QueuePaused { paused: true });
@@ -439,6 +460,13 @@ pub async fn resume_queue(
 ) -> AppResult<Json<serde_json::Value>> {
     ensure_admin(&user)?;
     settings::set_queue_paused(&state.pool, false).await?;
+    audit::log(
+        &state.pool,
+        Some(user.id),
+        "admin.queue.resume",
+        &serde_json::json!({}),
+    )
+    .await?;
     state
         .broadcaster
         .send(QueueEvent::QueuePaused { paused: false });
@@ -464,11 +492,11 @@ pub async fn cancel_task(
     let task = if current.status == "printing" {
         let job_id = current.windows_job_id.ok_or_else(|| {
             AppError::Conflict(
-                "该任务尚未记录 Windows 作业 ID，无法安全取消；请先检查系统打印队列".to_string(),
+                "该任务尚未记录系统作业 ID，无法安全取消；请先检查系统打印队列".to_string(),
             )
         })?;
         printer::cancel_job(&state.config, job_id).await?;
-        sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, completed_at = datetime('now'), status_detail = 'Windows 作业已取消' WHERE id = ? AND status = 'printing'")
+        sqlx::query("UPDATE print_tasks SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, completed_at = datetime('now'), status_detail = '系统打印作业已取消' WHERE id = ? AND status = 'printing'")
             .bind(reason).bind(task_id).execute(&state.pool).await?;
         if let Some(preview) = current.preview_path.as_deref() {
             if let Some(parent) = std::path::Path::new(preview).parent() {
@@ -522,11 +550,14 @@ pub async fn approve_review(
         UPDATE print_tasks
         SET status = 'queued',
             approved_over_quota = 1,
-            submitted_at = datetime('now'),
+            queued_at = datetime('now'),
+            reviewed_at = datetime('now'),
+            reviewed_by = ?,
             review_reason = NULL
         WHERE id = ? AND status = 'pending_review'
         "#,
     )
+    .bind(user.id)
     .bind(task_id)
     .execute(&state.pool)
     .await?
@@ -564,11 +595,13 @@ pub async fn reject_review(
     let affected = sqlx::query(
         r#"
         UPDATE print_tasks
-        SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?, completed_at = datetime('now')
+        SET status = 'cancelled', cancelled_by = 'admin', review_reason = ?,
+            completed_at = datetime('now'), reviewed_at = datetime('now'), reviewed_by = ?
         WHERE id = ? AND status = 'pending_review'
         "#,
     )
     .bind(request.reason)
+    .bind(user.id)
     .bind(task_id)
     .execute(&state.pool)
     .await?
@@ -675,7 +708,7 @@ pub async fn get_config(
 ) -> AppResult<Json<ConfigResponse>> {
     ensure_admin(&user)?;
     Ok(Json(ConfigResponse {
-        daily_limit: settings::get_or(&state.pool, "daily_limit", "50").await?,
+        daily_limit: settings::get_or(&state.pool, "daily_limit", "10").await?,
         queue_paused: settings::queue_paused(&state.pool).await?,
         printer: state.printer_state.read().await.clone(),
     }))

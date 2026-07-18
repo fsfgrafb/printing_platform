@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use calamine::{open_workbook_auto, Reader};
 
@@ -33,10 +33,11 @@ pub fn parse_student_ids(path: &Path, bytes: &[u8]) -> AppResult<Vec<String>> {
         _ => parse_plain(bytes),
     };
 
+    let mut seen = HashSet::new();
     let mut unique = Vec::new();
     for id in ids {
         let id = id.trim().to_string();
-        if id.is_empty() || unique.iter().any(|existing| existing == &id) {
+        if id.is_empty() || !seen.insert(id.clone()) {
             continue;
         }
         unique.push(id);
@@ -47,21 +48,11 @@ pub fn parse_student_ids(path: &Path, bytes: &[u8]) -> AppResult<Vec<String>> {
             "import file does not contain any student id".to_string(),
         ));
     }
+    if unique.len() > 1_000 {
+        return Err(AppError::BadRequest("一次最多导入 1000 个账号".to_string()));
+    }
 
     Ok(unique)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ensure_supported_file_name;
-
-    #[test]
-    fn import_file_name_rejects_unknown_extensions() {
-        assert!(ensure_supported_file_name("users.xlsx").is_ok());
-        assert!(ensure_supported_file_name("users.CSV").is_ok());
-        assert!(ensure_supported_file_name("users.exe").is_err());
-        assert!(ensure_supported_file_name("users").is_err());
-    }
 }
 
 fn parse_excel(path: &Path) -> AppResult<Vec<String>> {
@@ -87,4 +78,17 @@ fn parse_plain(bytes: &[u8]) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_supported_file_name;
+
+    #[test]
+    fn import_file_name_rejects_unknown_extensions() {
+        assert!(ensure_supported_file_name("users.xlsx").is_ok());
+        assert!(ensure_supported_file_name("users.CSV").is_ok());
+        assert!(ensure_supported_file_name("users.exe").is_err());
+        assert!(ensure_supported_file_name("users").is_err());
+    }
 }

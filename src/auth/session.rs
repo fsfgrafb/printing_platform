@@ -77,7 +77,15 @@ pub async fn authenticate(
     .fetch_optional(pool)
     .await?;
 
-    if user.is_some() {
+    let Some(user) = user else {
+        return Ok(None);
+    };
+    let expires_at: String = sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token = ?")
+        .bind(token)
+        .fetch_one(pool)
+        .await?;
+    let renew_before = (Utc::now() + Duration::days(7)).to_rfc3339();
+    if expires_at < renew_before {
         let expires_at = (Utc::now() + Duration::days(session_days)).to_rfc3339();
         sqlx::query("UPDATE sessions SET expires_at = ? WHERE token = ?")
             .bind(expires_at)
@@ -86,7 +94,7 @@ pub async fn authenticate(
             .await?;
     }
 
-    Ok(user)
+    Ok(Some(user))
 }
 
 pub async fn delete_user_sessions(pool: &SqlitePool, user_id: i64) -> AppResult<()> {

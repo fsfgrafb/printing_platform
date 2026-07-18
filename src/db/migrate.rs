@@ -37,6 +37,7 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
             stored_path TEXT NOT NULL,
             preview_path TEXT NOT NULL,
             page_count INTEGER NOT NULL DEFAULT 1,
+            byte_size INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
@@ -62,17 +63,10 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
             job_seen_at TEXT,
             status_detail TEXT,
             submitted_ip TEXT,
+            queued_at TEXT,
+            reviewed_at TEXT,
+            reviewed_by INTEGER,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS daily_usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            page_count INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE(user_id, date)
         )
         "#,
         r#"
@@ -93,14 +87,13 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
         )
         "#,
         "CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_tasks_status_id ON print_tasks(status, id)",
         "CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON print_tasks(user_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_tasks_completed ON print_tasks(completed_at)",
-        "INSERT OR IGNORE INTO global_config (key, value) VALUES ('daily_limit', '50')",
-        "INSERT OR IGNORE INTO global_config (key, value) VALUES ('admin_qq', '')",
-        "INSERT OR IGNORE INTO global_config (key, value) VALUES ('admin_student_id', '')",
+        "CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_user_created ON audit_log(user_id, created_at)",
         "INSERT OR IGNORE INTO global_config (key, value) VALUES ('queue_paused', 'false')",
-        "INSERT OR IGNORE INTO global_config (key, value) VALUES ('submit_page_visits', '0')",
     ];
 
     for statement in statements {
@@ -113,6 +106,16 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
     add_column_if_missing(pool, "print_tasks", "job_seen_at", "TEXT").await?;
     add_column_if_missing(pool, "print_tasks", "status_detail", "TEXT").await?;
     add_column_if_missing(pool, "print_tasks", "submitted_ip", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "queued_at", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "reviewed_at", "TEXT").await?;
+    add_column_if_missing(pool, "print_tasks", "reviewed_by", "INTEGER").await?;
+    add_column_if_missing(
+        pool,
+        "temp_uploads",
+        "byte_size",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
     add_column_if_missing(pool, "users", "last_login_at", "TEXT").await?;
     add_column_if_missing(pool, "users", "phone", "TEXT").await?;
     add_column_if_missing(pool, "users", "status", "TEXT NOT NULL DEFAULT 'unused'").await?;
@@ -121,6 +124,12 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
     )
     .execute(pool)
     .await?;
+    sqlx::query("DELETE FROM global_config WHERE key IN ('admin_qq', 'admin_student_id')")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS daily_usage")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

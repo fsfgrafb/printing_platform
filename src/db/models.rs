@@ -75,6 +75,7 @@ pub struct TempUpload {
     pub stored_path: String,
     pub preview_path: String,
     pub page_count: i64,
+    pub byte_size: i64,
     pub created_at: String,
 }
 

@@ -137,8 +137,9 @@ pub async fn queue_rows(
         JOIN users u ON u.id = t.user_id
         WHERE {visibility}
         ORDER BY
-            CASE t.status WHEN 'printing' THEN 0 WHEN 'queued' THEN 1 WHEN 'pending_review' THEN 2 ELSE 3 END,
-            CASE WHEN t.status IN ('queued', 'printing', 'pending_review') THEN t.submitted_at END ASC,
+            CASE t.status WHEN 'printing' THEN 0 WHEN 'spooling' THEN 0 WHEN 'queued' THEN 1 WHEN 'pending_review' THEN 2 WHEN 'uncertain' THEN 3 ELSE 4 END,
+            CASE WHEN t.status IN ('queued', 'spooling', 'printing') THEN COALESCE(t.queued_at, t.submitted_at)
+                 WHEN t.status = 'pending_review' THEN t.submitted_at END ASC,
             t.id DESC
         LIMIT ? OFFSET ?
         "#
@@ -184,6 +185,7 @@ pub async fn queue_rows(
 pub fn to_view(row: QueueRow, user: &User) -> QueueTaskView {
     let mine = row.user_id == user.id;
     let can_see_file = user.is_admin() || mine;
+    let can_see_reason = user.is_admin() || (mine && row.status != "uncertain");
     QueueTaskView {
         id: row.id,
         status: row.status,
@@ -195,13 +197,73 @@ pub fn to_view(row: QueueRow, user: &User) -> QueueTaskView {
         mine,
         file_name_visible: can_see_file,
         file_name: can_see_file.then_some(row.file_name),
-        review_reason: row.review_reason,
-        status_detail: row.status_detail,
-        submitted_ip: row.submitted_ip,
-        windows_job_id: row.windows_job_id,
+        review_reason: can_see_reason.then_some(row.review_reason).flatten(),
+        status_detail: user.is_admin().then_some(row.status_detail).flatten(),
+        submitted_ip: user.is_admin().then_some(row.submitted_ip).flatten(),
+        windows_job_id: user.is_admin().then_some(row.windows_job_id).flatten(),
         preview_url: (row.preview_available && can_see_file)
             .then(|| format!("/api/print/tasks/{}/preview", row.id)),
         source_url: (row.preview_available && can_see_file)
             .then(|| format!("/api/print/tasks/{}/source", row.id)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{to_view, QueueRow};
+    use crate::db::models::User;
+
+    fn user(role: &str) -> User {
+        User {
+            id: 1,
+            student_id: "student".into(),
+            password_hash: "hash".into(),
+            role: role.into(),
+            qq: None,
+            phone: None,
+            status: "normal".into(),
+            must_change_password: false,
+            created_at: String::new(),
+            last_login_at: None,
+        }
+    }
+
+    fn other_task() -> QueueRow {
+        QueueRow {
+            id: 9,
+            user_id: 2,
+            student_id: "other".into(),
+            file_name: "private.pdf".into(),
+            page_count: 1,
+            odd_even: "all".into(),
+            status: "queued".into(),
+            submitted_at: String::new(),
+            completed_at: None,
+            review_reason: None,
+            status_detail: Some("internal detail".into()),
+            submitted_ip: Some("10.0.0.2".into()),
+            windows_job_id: Some(42),
+            preview_available: true,
+        }
+    }
+
+    #[test]
+    fn normal_users_never_receive_admin_only_task_fields() {
+        let view = to_view(other_task(), &user("user"));
+        assert!(view.file_name.is_none());
+        assert!(view.submitted_ip.is_none());
+        assert!(view.windows_job_id.is_none());
+        assert!(view.status_detail.is_none());
+        assert!(view.preview_url.is_none());
+        assert!(view.source_url.is_none());
+    }
+
+    #[test]
+    fn admins_receive_operational_task_fields() {
+        let view = to_view(other_task(), &user("admin"));
+        assert_eq!(view.file_name.as_deref(), Some("private.pdf"));
+        assert_eq!(view.submitted_ip.as_deref(), Some("10.0.0.2"));
+        assert_eq!(view.windows_job_id, Some(42));
+        assert!(view.preview_url.is_some());
     }
 }

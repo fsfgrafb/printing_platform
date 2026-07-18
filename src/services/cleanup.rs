@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use chrono::{Duration as ChronoDuration, Local};
+use chrono::{Duration as ChronoDuration, Utc};
 use tokio::{
     fs,
     time::{interval, Duration},
@@ -31,11 +31,11 @@ pub fn spawn(state: AppState) {
 }
 
 async fn run_once(state: &AppState) -> AppResult<()> {
-    let temp_cutoff = (Local::now()
+    let temp_cutoff = (Utc::now()
         - ChronoDuration::hours(state.config.temp_upload_retention_hours.max(1)))
     .format("%Y-%m-%d %H:%M:%S")
     .to_string();
-    let history_cutoff = (Local::now()
+    let history_cutoff = (Utc::now()
         - ChronoDuration::days(state.config.file_retention_days.max(1)))
     .format("%Y-%m-%d %H:%M:%S")
     .to_string();
@@ -51,14 +51,16 @@ async fn run_once(state: &AppState) -> AppResult<()> {
     .fetch_all(&state.pool)
     .await?;
 
+    let mut removed_uploads = 0;
     for upload in &temp_uploads {
-        remove_paths(upload).await;
+        if remove_paths(upload).await {
+            sqlx::query("DELETE FROM temp_uploads WHERE id = ?")
+                .bind(upload.id)
+                .execute(&state.pool)
+                .await?;
+            removed_uploads += 1;
+        }
     }
-
-    sqlx::query("DELETE FROM temp_uploads WHERE created_at < ?")
-        .bind(&temp_cutoff)
-        .execute(&state.pool)
-        .await?;
 
     let old_tasks = sqlx::query_as::<_, FileRow>(
         r#"
@@ -72,25 +74,25 @@ async fn run_once(state: &AppState) -> AppResult<()> {
     .fetch_all(&state.pool)
     .await?;
 
+    let mut removed_tasks = 0;
     for task in &old_tasks {
-        remove_paths(task).await;
+        if remove_paths(task).await {
+            sqlx::query("DELETE FROM print_tasks WHERE id = ?")
+                .bind(task.id)
+                .execute(&state.pool)
+                .await?;
+            removed_tasks += 1;
+        }
     }
-
-    sqlx::query(
-        r#"
-        DELETE FROM print_tasks
-        WHERE status IN ('done', 'cancelled')
-          AND COALESCE(completed_at, submitted_at) < ?
-        "#,
-    )
-    .bind(&history_cutoff)
-    .execute(&state.pool)
-    .await?;
+    sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
+        .bind(Utc::now().to_rfc3339())
+        .execute(&state.pool)
+        .await?;
 
     if !temp_uploads.is_empty() || !old_tasks.is_empty() {
         info!(
-            temp_uploads = temp_uploads.len(),
-            old_tasks = old_tasks.len(),
+            temp_uploads = removed_uploads,
+            old_tasks = removed_tasks,
             "cleanup removed expired records"
         );
     }
@@ -98,7 +100,8 @@ async fn run_once(state: &AppState) -> AppResult<()> {
     Ok(())
 }
 
-async fn remove_paths(row: &FileRow) {
+async fn remove_paths(row: &FileRow) -> bool {
+    let mut ok = true;
     for path in [&row.stored_path, &row.preview_path]
         .into_iter()
         .flatten()
@@ -107,7 +110,9 @@ async fn remove_paths(row: &FileRow) {
         if let Err(error) = fs::remove_file(&path).await {
             if error.kind() != std::io::ErrorKind::NotFound {
                 warn!(?error, row_id = row.id, path = %path.display(), "failed to remove expired file");
+                ok = false;
             }
         }
     }
+    ok
 }

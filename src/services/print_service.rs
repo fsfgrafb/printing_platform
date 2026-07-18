@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use lopdf::Document;
 use sqlx::SqlitePool;
@@ -18,18 +21,31 @@ pub fn selected_page_count(total: i64, odd_even: &str) -> AppResult<i64> {
         "all" => total,
         "odd" => (total + 1) / 2,
         "even" => total / 2,
-        _ => Err(AppError::BadRequest(
-            "odd_even must be one of all, odd, even".to_string(),
-        ))?,
+        selection if selection.starts_with("custom:") => {
+            let total = u32::try_from(total)
+                .map_err(|_| AppError::BadRequest("文件页数超出支持范围".to_string()))?;
+            i64::try_from(parse_custom_pages(total, &selection["custom:".len()..])?.len())
+                .map_err(|_| AppError::BadRequest("自定义页码数量超出支持范围".to_string()))?
+        }
+        _ => {
+            return Err(AppError::BadRequest(
+                "页码范围必须是全部页、奇数页、偶数页或自定义页码".to_string(),
+            ))
+        }
     };
 
     if selected == 0 {
-        Err(AppError::BadRequest(
-            "selected page range contains no pages".to_string(),
-        ))
+        Err(AppError::BadRequest("所选页码中没有可打印页面".to_string()))
     } else {
         Ok(selected)
     }
+}
+
+pub fn normalize_custom_page_range(total: i64, input: &str) -> AppResult<String> {
+    let total = u32::try_from(total.max(1))
+        .map_err(|_| AppError::BadRequest("文件页数超出支持范围".to_string()))?;
+    let pages = parse_custom_pages(total, input)?;
+    Ok(format!("custom:{}", format_page_ranges(&pages)))
 }
 
 pub async fn apply_page_selection(pdf_path: &Path, odd_even: &str) -> AppResult<()> {
@@ -83,19 +99,101 @@ fn pages_to_delete(total_pages: u32, odd_even: &str) -> AppResult<Vec<u32>> {
         "all" => Vec::new(),
         "odd" => (1..=total_pages).filter(|page| page % 2 == 0).collect(),
         "even" => (1..=total_pages).filter(|page| page % 2 == 1).collect(),
+        selection if selection.starts_with("custom:") => {
+            let selected = parse_custom_pages(total_pages, &selection["custom:".len()..])?;
+            (1..=total_pages)
+                .filter(|page| !selected.contains(page))
+                .collect()
+        }
         _ => {
             return Err(AppError::BadRequest(
-                "odd_even must be one of all, odd, even".to_string(),
+                "页码范围必须是全部页、奇数页、偶数页或自定义页码".to_string(),
             ))
         }
     };
 
     if delete_pages.len() == total_pages as usize {
-        Err(AppError::BadRequest(
-            "selected page range contains no pages".to_string(),
-        ))
+        Err(AppError::BadRequest("所选页码中没有可打印页面".to_string()))
     } else {
         Ok(delete_pages)
+    }
+}
+
+fn parse_custom_pages(total_pages: u32, input: &str) -> AppResult<BTreeSet<u32>> {
+    let mut pages = BTreeSet::new();
+    for token in input
+        .split(|character: char| {
+            character.is_whitespace() || matches!(character, ',' | '，' | '、')
+        })
+        .filter(|token| !token.is_empty())
+    {
+        let mut bounds = token.split('-');
+        let start = parse_page_number(bounds.next().unwrap_or_default(), total_pages)?;
+        let end = match bounds.next() {
+            Some(value) => parse_page_number(value, total_pages)?,
+            None => start,
+        };
+        if bounds.next().is_some() {
+            return Err(AppError::BadRequest(format!(
+                "页码格式“{token}”无效，请使用数字或起止页（如 2-5）"
+            )));
+        }
+        if start > end {
+            return Err(AppError::BadRequest(format!(
+                "页码范围“{token}”的起始页不能大于结束页"
+            )));
+        }
+        for page in start..=end {
+            if !pages.insert(page) {
+                return Err(AppError::BadRequest(format!(
+                    "自定义页码中重复指定了第 {page} 页"
+                )));
+            }
+        }
+    }
+    if pages.is_empty() {
+        return Err(AppError::BadRequest("请输入要打印的自定义页码".to_string()));
+    }
+    Ok(pages)
+}
+
+fn parse_page_number(value: &str, total_pages: u32) -> AppResult<u32> {
+    let page = value.parse::<u32>().map_err(|_| {
+        AppError::BadRequest(format!("页码“{value}”无效，请使用数字或起止页（如 2-5）"))
+    })?;
+    if page == 0 || page > total_pages {
+        return Err(AppError::BadRequest(format!(
+            "页码 {page} 超出有效范围 1-{total_pages}"
+        )));
+    }
+    Ok(page)
+}
+
+fn format_page_ranges(pages: &BTreeSet<u32>) -> String {
+    let mut ranges = Vec::new();
+    let mut iter = pages.iter().copied();
+    let Some(mut start) = iter.next() else {
+        return String::new();
+    };
+    let mut end = start;
+    for page in iter {
+        if page == end + 1 {
+            end = page;
+            continue;
+        }
+        ranges.push(format_page_range(start, end));
+        start = page;
+        end = page;
+    }
+    ranges.push(format_page_range(start, end));
+    ranges.join(",")
+}
+
+fn format_page_range(start: u32, end: u32) -> String {
+    if start == end {
+        start.to_string()
+    } else {
+        format!("{start}-{end}")
     }
 }
 
@@ -119,10 +217,11 @@ pub async fn cancel_task(
         return Err(AppError::Forbidden);
     }
 
-    if task.status != "queued" && task.status != "pending_review" {
-        return Err(AppError::Conflict(
-            "only queued or pending review tasks can be cancelled".to_string(),
-        ));
+    if task.status != "queued"
+        && task.status != "pending_review"
+        && !(actor.is_admin() && task.status == "uncertain")
+    {
+        return Err(AppError::Conflict("该任务当前不能安全取消".to_string()));
     }
 
     let cancelled_by = if actor.is_admin() { "admin" } else { "user" };
@@ -131,12 +230,13 @@ pub async fn cancel_task(
         UPDATE print_tasks
         SET status = 'cancelled', cancelled_by = ?, review_reason = ?,
             completed_at = datetime('now'), status_detail = '任务已取消'
-        WHERE id = ?
+        WHERE id = ? AND status = ?
         "#,
     )
     .bind(cancelled_by)
     .bind(reason)
     .bind(task_id)
+    .bind(&task.status)
     .execute(pool)
     .await?;
 
@@ -154,15 +254,30 @@ pub async fn load_task(pool: &SqlitePool, task_id: i64) -> AppResult<PrintTask> 
 
 #[cfg(test)]
 mod tests {
-    use super::{pages_to_delete, quota_status, selected_page_count};
+    use super::{normalize_custom_page_range, pages_to_delete, quota_status, selected_page_count};
 
     #[test]
     fn selected_page_count_handles_page_ranges() {
         assert_eq!(selected_page_count(5, "all").unwrap(), 5);
         assert_eq!(selected_page_count(5, "odd").unwrap(), 3);
         assert_eq!(selected_page_count(5, "even").unwrap(), 2);
+        assert_eq!(selected_page_count(8, "custom:1-3,5，7、8").unwrap(), 6);
         assert!(selected_page_count(1, "even").is_err());
         assert!(selected_page_count(5, "invalid").is_err());
+    }
+
+    #[test]
+    fn custom_page_ranges_are_validated_and_normalized() {
+        assert_eq!(
+            normalize_custom_page_range(10, "1-3，5、7 8").unwrap(),
+            "custom:1-3,5,7-8"
+        );
+        assert!(normalize_custom_page_range(10, "").is_err());
+        assert!(normalize_custom_page_range(10, "0").is_err());
+        assert!(normalize_custom_page_range(10, "11").is_err());
+        assert!(normalize_custom_page_range(10, "4-2").is_err());
+        assert!(normalize_custom_page_range(10, "1-3,3").is_err());
+        assert!(normalize_custom_page_range(10, "1--3").is_err());
     }
 
     #[test]
@@ -170,6 +285,7 @@ mod tests {
         assert_eq!(pages_to_delete(5, "all").unwrap(), Vec::<u32>::new());
         assert_eq!(pages_to_delete(5, "odd").unwrap(), vec![2, 4]);
         assert_eq!(pages_to_delete(5, "even").unwrap(), vec![1, 3, 5]);
+        assert_eq!(pages_to_delete(8, "custom:1-3,5,7-8").unwrap(), vec![4, 6]);
         assert!(pages_to_delete(1, "even").is_err());
     }
 

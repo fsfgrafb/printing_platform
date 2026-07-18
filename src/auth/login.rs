@@ -24,6 +24,7 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub user: UserView,
+    pub min_password_length: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,11 +61,6 @@ pub async fn ensure_initial_admin(pool: &SqlitePool, config: &Config) -> AppResu
     .bind(hash)
     .execute(pool)
     .await?;
-
-    sqlx::query("UPDATE global_config SET value = ? WHERE key = 'admin_student_id'")
-        .bind(student_id)
-        .execute(pool)
-        .await?;
 
     Ok(())
 }
@@ -117,7 +113,13 @@ pub async fn login(
     let token = session::create_session(&state.pool, user.id, state.config.session_days).await?;
     let jar = jar.add(session_cookie(&token, state.config.session_days));
 
-    Ok((jar, Json(LoginResponse { user: user.into() })))
+    Ok((
+        jar,
+        Json(LoginResponse {
+            user: user.into(),
+            min_password_length: state.config.min_password_length,
+        }),
+    ))
 }
 
 pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> AppResult<CookieJar> {
@@ -128,8 +130,14 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> AppResult<
     Ok(jar.remove(remove_cookie()))
 }
 
-pub async fn me(CurrentUser(user): CurrentUser) -> AppResult<Json<LoginResponse>> {
-    Ok(Json(LoginResponse { user: user.into() }))
+pub async fn me(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<LoginResponse>> {
+    Ok(Json(LoginResponse {
+        user: user.into(),
+        min_password_length: state.config.min_password_length,
+    }))
 }
 
 pub async fn change_password(
@@ -138,14 +146,15 @@ pub async fn change_password(
     CurrentUser(user): CurrentUser,
     Json(request): Json<ChangePasswordRequest>,
 ) -> AppResult<(CookieJar, Json<serde_json::Value>)> {
-    if request.new_password.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "new password cannot be empty".to_string(),
-        ));
+    if request.new_password.chars().count() < state.config.min_password_length {
+        return Err(AppError::BadRequest(format!(
+            "新密码至少需要 {} 个字符",
+            state.config.min_password_length
+        )));
     }
 
     if request.new_password != request.confirm_password {
-        return Err(AppError::BadRequest("passwords do not match".to_string()));
+        return Err(AppError::BadRequest("两次输入的密码不一致".to_string()));
     }
 
     let hash = session::hash_password(&request.new_password)?;

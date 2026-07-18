@@ -5,21 +5,28 @@ edition = "2021"
 
 [dependencies]
 argon2 = "0.5"
-axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
+axum = { version = "0.7", features = ["multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
 calamine = "0.24"
-chrono = { version = "0.4", features = ["clock", "serde"] }
+chrono = { version = "0.4", features = ["clock"] }
 futures-util = "0.3"
 lopdf = "0.32"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.7", features = ["chrono", "runtime-tokio-rustls", "sqlite"] }
+sqlx = { version = "0.7", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlite"] }
 thiserror = "1"
 time = "0.3"
 tokio = { version = "1", features = ["fs", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.8"
-tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.5", features = ["fs", "set-header", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-uuid = { version = "1", features = ["serde", "v4"] }
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+panic = "abort"

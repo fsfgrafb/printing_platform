@@ -5,7 +5,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{app::AppState, auth::middleware::CurrentUser, error::AppResult, services::quota};
+use crate::{
+    app::AppState,
+    auth::middleware::CurrentUser,
+    error::AppResult,
+    services::{quota, settings},
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -48,23 +53,7 @@ pub async fn submit_stats(
     State(state): State<AppState>,
     CurrentUser(_user): CurrentUser,
 ) -> AppResult<Json<SubmitStatsResponse>> {
-    let mut tx = state.pool.begin().await?;
-    sqlx::query(
-        r#"
-        INSERT INTO global_config (key, value)
-        VALUES ('submit_page_visits', '1')
-        ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
-        "#,
-    )
-    .execute(&mut *tx)
-    .await?;
-    let visit_count: i64 = sqlx::query_scalar(
-        "SELECT CAST(value AS INTEGER) FROM global_config WHERE key = 'submit_page_visits'",
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-
+    let visit_count = settings::increment_counter(&state.pool, "submit_page_visits").await?;
     let print_total_pages: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(page_count), 0) FROM print_tasks WHERE status = 'done'",
     )
@@ -121,7 +110,10 @@ pub struct AdminContactResponse {
     pub qq: String,
 }
 
-pub async fn admin_contact(State(state): State<AppState>) -> AppResult<Json<AdminContactResponse>> {
+pub async fn admin_contact(
+    State(state): State<AppState>,
+    CurrentUser(_user): CurrentUser,
+) -> AppResult<Json<AdminContactResponse>> {
     let row = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT student_id, qq FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1",
     )

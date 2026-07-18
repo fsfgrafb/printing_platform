@@ -42,14 +42,6 @@ pub async fn prepare_preview(config: &Config, source: &Path, preview_pdf: &Path)
     }
 
     ensure_supported(source)?;
-    if config.converter.office_program.trim().is_empty()
-        && config.converter.office_command.trim().is_empty()
-    {
-        return Err(AppError::External(
-            "document conversion is not configured; set converter.office_program and converter.office_args"
-                .to_string(),
-        ));
-    }
     info!(source = %source.display(), preview = %preview_pdf.display(), "running document converter");
     run_external_converter(config, source, preview_pdf).await?;
     count_pdf_pages_async(config, preview_pdf).await
@@ -95,34 +87,31 @@ async fn run_external_converter(config: &Config, source: &Path, output: &Path) -
     let output_path = output
         .to_str()
         .ok_or_else(|| AppError::External("preview path is not valid UTF-8".to_string()))?;
-    let mut command = if !config.converter.office_program.trim().is_empty() {
-        let mut command = tokio::process::Command::new(&config.converter.office_program);
-        command.args(
-            config
-                .converter
-                .office_args
-                .iter()
-                .map(|argument| replace_placeholders(argument, input, output_path)),
-        );
-        command
+    let output_dir = output
+        .parent()
+        .and_then(Path::to_str)
+        .ok_or_else(|| AppError::External("preview directory is not valid UTF-8".to_string()))?;
+    let program = converter_program(config);
+    let default_args = [
+        "--headless",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        "{output_dir}",
+        "{input}",
+    ];
+    let arguments: &[String] = &config.converter.office_args;
+    let mut command = tokio::process::Command::new(program);
+    let templates: Vec<&str> = if arguments.is_empty() {
+        default_args.to_vec()
     } else {
-        // Legacy command-string mode is retained for existing installations.
-        // It is inherently sensitive to shell quoting, so new configurations
-        // should always use office_program and office_args.
-        let command_line =
-            replace_placeholders(&config.converter.office_command, input, output_path);
-        let mut command = if cfg!(windows) {
-            let mut command = tokio::process::Command::new("cmd");
-            command.arg("/C").arg(command_line);
-            command
-        } else {
-            let mut command = tokio::process::Command::new("sh");
-            command.arg("-c").arg(command_line);
-            command
-        };
-        command.kill_on_drop(true);
-        command
+        arguments.iter().map(String::as_str).collect()
     };
+    command.args(
+        templates
+            .iter()
+            .map(|argument| replace_placeholders(argument, input, output_path, output_dir)),
+    );
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -135,6 +124,16 @@ async fn run_external_converter(config: &Config, source: &Path, output: &Path) -
     .await
     .map_err(|_| AppError::External("document converter timed out".to_string()))??;
 
+    if result.status.success() && !output.exists() {
+        let generated = output
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(source.file_stem().unwrap_or_default())
+            .with_extension("pdf");
+        if generated.exists() {
+            fs::rename(generated, output).await?;
+        }
+    }
     if result.status.success() && output.exists() {
         Ok(())
     } else {
@@ -153,10 +152,36 @@ async fn run_external_converter(config: &Config, source: &Path, output: &Path) -
     }
 }
 
-fn replace_placeholders(template: &str, input: &str, output: &str) -> String {
+fn converter_program(config: &Config) -> String {
+    if !config.converter.office_program.trim().is_empty() {
+        return config.converter.office_program.clone();
+    }
+    #[cfg(windows)]
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            for relative in [
+                "tools/LibreOffice/program/soffice.exe",
+                "tools/LibreOfficePortable/App/libreoffice/program/soffice.exe",
+            ] {
+                let candidate = directory.join(relative);
+                if candidate.is_file() {
+                    return candidate.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    if cfg!(windows) {
+        "soffice.exe".into()
+    } else {
+        "libreoffice".into()
+    }
+}
+
+fn replace_placeholders(template: &str, input: &str, output: &str, output_dir: &str) -> String {
     template
         .replace("{input}", input)
         .replace("{output}", output)
+        .replace("{output_dir}", output_dir)
 }
 
 #[cfg(test)]
@@ -167,8 +192,14 @@ mod tests {
     fn placeholders_preserve_spaces_as_part_of_one_argument() {
         let input = r"C:\Users\ACM User\input file.docx";
         let output = r"C:\Printing Platform\preview file.pdf";
-        assert_eq!(replace_placeholders("{input}", input, output), input);
-        assert_eq!(replace_placeholders("{output}", input, output), output);
+        assert_eq!(
+            replace_placeholders("{input}", input, output, "C:\\out"),
+            input
+        );
+        assert_eq!(
+            replace_placeholders("{output}", input, output, "C:\\out"),
+            output
+        );
     }
 
     #[test]

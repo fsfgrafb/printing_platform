@@ -1,5 +1,5 @@
 use chrono::Local;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::SqlitePool;
 
 use crate::{error::AppResult, services::settings};
 
@@ -8,8 +8,8 @@ pub fn today() -> String {
 }
 
 pub async fn daily_limit(pool: &SqlitePool) -> AppResult<i64> {
-    let value = settings::get_or(pool, "daily_limit", "50").await?;
-    Ok(value.parse::<i64>().unwrap_or(50).max(0))
+    let value = settings::get_or(pool, "daily_limit", "10").await?;
+    Ok(value.parse::<i64>().unwrap_or(10).max(0))
 }
 
 pub async fn used_today(pool: &SqlitePool, user_id: i64) -> AppResult<i64> {
@@ -38,34 +38,11 @@ pub async fn reserved(pool: &SqlitePool, user_id: i64) -> AppResult<i64> {
         SELECT COALESCE(SUM(page_count), 0)
         FROM print_tasks
         WHERE user_id = ?
-          AND status IN ('queued', 'printing')
+          AND status IN ('queued', 'spooling', 'printing')
           AND approved_over_quota = 0
         "#,
     )
     .bind(user_id)
     .fetch_one(pool)
     .await?)
-}
-
-pub async fn add_usage_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    user_id: i64,
-    pages: i64,
-) -> AppResult<()> {
-    let date = today();
-    sqlx::query(
-        r#"
-        INSERT INTO daily_usage (user_id, date, page_count)
-        VALUES (?, ?, ?)
-        ON CONFLICT(user_id, date)
-        DO UPDATE SET page_count = page_count + excluded.page_count
-        "#,
-    )
-    .bind(user_id)
-    .bind(date)
-    .bind(pages)
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
 }
