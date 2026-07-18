@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/users/import", post(import_users))
         .route("/admin/users/:user_id", delete(delete_user))
         .route("/admin/users/:user_id/reset-password", post(reset_password))
+        .route("/admin/users/:user_id/status", post(update_user_status))
         .route("/admin/queue/pause", post(pause_queue))
         .route("/admin/queue/resume", post(resume_queue))
         .route("/admin/tasks/:task_id", delete(cancel_task))
@@ -76,7 +77,7 @@ pub async fn create_user(
     .execute(&state.pool)
     .await?;
     let created = sqlx::query_as::<_, User>(
-        "SELECT id, student_id, password_hash, role, qq, must_change_password, created_at, last_login_at FROM users WHERE id = ?",
+        "SELECT id, student_id, password_hash, role, qq, phone, status, must_change_password, created_at, last_login_at FROM users WHERE id = ?",
     )
     .bind(result.last_insert_rowid())
     .fetch_one(&state.pool)
@@ -100,6 +101,8 @@ pub struct AdminUserView {
     pub student_id: String,
     pub role: String,
     pub qq: Option<String>,
+    pub phone: Option<String>,
+    pub status: String,
     pub must_change_password: bool,
     pub created_at: String,
     pub last_login_at: Option<String>,
@@ -111,6 +114,9 @@ pub struct AdminUserView {
 pub struct UsersQuery {
     pub page: Option<i64>,
     pub per_page: Option<i64>,
+    pub q: Option<String>,
+    pub role: Option<String>,
+    pub status: Option<String>,
 }
 
 pub async fn users(
@@ -122,23 +128,62 @@ pub async fn users(
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * per_page;
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{value}%"));
+    let role = validated_filter(query.role.as_deref(), &["admin", "user"], "角色")?;
+    let status = validated_filter(
+        query.status.as_deref(),
+        &["normal", "banned", "unused"],
+        "状态",
+    )?;
 
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(&state.pool)
-        .await?;
+    let total: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM users
+        WHERE (? IS NULL OR role = ?)
+          AND (? IS NULL OR status = ?)
+          AND (? IS NULL OR student_id LIKE ? OR phone LIKE ? OR qq LIKE ?)
+        "#,
+    )
+    .bind(role)
+    .bind(role)
+    .bind(status)
+    .bind(status)
+    .bind(search.as_deref())
+    .bind(search.as_deref())
+    .bind(search.as_deref())
+    .bind(search.as_deref())
+    .fetch_one(&state.pool)
+    .await?;
     let items = sqlx::query_as::<_, AdminUserView>(
         r#"
-        SELECT u.id, u.student_id, u.role, u.qq, u.must_change_password,
+        SELECT u.id, u.student_id, u.role, u.qq, u.phone, u.status, u.must_change_password,
                u.created_at, u.last_login_at,
                COALESCE(SUM(CASE WHEN t.status = 'done' THEN t.page_count ELSE 0 END), 0) AS total_pages,
                COALESCE(SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END), 0) AS total_tasks
         FROM users u
         LEFT JOIN print_tasks t ON t.user_id = u.id
+        WHERE (? IS NULL OR u.role = ?)
+          AND (? IS NULL OR u.status = ?)
+          AND (? IS NULL OR u.student_id LIKE ? OR u.phone LIKE ? OR u.qq LIKE ?)
         GROUP BY u.id
         ORDER BY u.role = 'admin' DESC, u.student_id ASC
         LIMIT ? OFFSET ?
         "#,
     )
+    .bind(role)
+    .bind(role)
+    .bind(status)
+    .bind(status)
+    .bind(search.as_deref())
+    .bind(search.as_deref())
+    .bind(search.as_deref())
+    .bind(search.as_deref())
     .bind(per_page)
     .bind(offset)
     .fetch_all(&state.pool)
@@ -150,6 +195,18 @@ pub async fn users(
         per_page,
         total,
     }))
+}
+
+fn validated_filter<'a>(
+    value: Option<&'a str>,
+    allowed: &[&str],
+    label: &str,
+) -> AppResult<Option<&'a str>> {
+    let value = value.map(str::trim).filter(|value| !value.is_empty());
+    if value.is_some_and(|value| !allowed.contains(&value)) {
+        return Err(AppError::BadRequest(format!("无效的{label}筛选条件")));
+    }
+    Ok(value)
 }
 
 #[derive(Debug, Serialize)]
@@ -274,7 +331,7 @@ pub async fn reset_password(
 ) -> AppResult<Json<serde_json::Value>> {
     ensure_admin(&user)?;
     let target = sqlx::query_as::<_, User>(
-        "SELECT id, student_id, password_hash, role, qq, must_change_password, created_at, last_login_at FROM users WHERE id = ?",
+        "SELECT id, student_id, password_hash, role, qq, phone, status, must_change_password, created_at, last_login_at FROM users WHERE id = ?",
     )
     .bind(user_id)
     .fetch_optional(&state.pool)
@@ -296,6 +353,72 @@ pub async fn reset_password(
     )
     .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UpdateUserStatusRequest {
+    pub status: String,
+}
+
+pub async fn update_user_status(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(user_id): Path<i64>,
+    Json(request): Json<UpdateUserStatusRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    ensure_admin(&user)?;
+    if user.id == user_id {
+        return Err(AppError::Conflict(
+            "不能封禁或解封当前管理员账号".to_string(),
+        ));
+    }
+    if request.status != "banned" && request.status != "normal" {
+        return Err(AppError::BadRequest(
+            "status must be banned or normal".to_string(),
+        ));
+    }
+
+    let target = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT student_id, status, last_login_at FROM users WHERE id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("user not found".to_string()))?;
+
+    let next_status = if request.status == "banned" {
+        "banned"
+    } else if target.2.is_none() {
+        "unused"
+    } else {
+        "normal"
+    };
+
+    sqlx::query("UPDATE users SET status = ? WHERE id = ?")
+        .bind(next_status)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await?;
+    if next_status == "banned" {
+        session::delete_user_sessions(&state.pool, user_id).await?;
+    }
+
+    audit::log(
+        &state.pool,
+        Some(user.id),
+        "admin.users.status",
+        &serde_json::json!({
+            "user_id": user_id,
+            "student_id": target.0,
+            "previous_status": target.1,
+            "status": next_status
+        }),
+    )
+    .await?;
+
+    Ok(Json(
+        serde_json::json!({ "ok": true, "status": next_status }),
+    ))
 }
 
 pub async fn pause_queue(
@@ -616,7 +739,7 @@ pub async fn transfer_admin(
     }
 
     let new_admin = sqlx::query_as::<_, User>(
-        "SELECT id, student_id, password_hash, role, qq, must_change_password, created_at, last_login_at FROM users WHERE student_id = ?",
+        "SELECT id, student_id, password_hash, role, qq, phone, status, must_change_password, created_at, last_login_at FROM users WHERE student_id = ?",
     )
     .bind(student_id)
     .fetch_optional(&state.pool)
@@ -625,6 +748,11 @@ pub async fn transfer_admin(
 
     if new_admin.id == user.id {
         return Err(AppError::Conflict("请选择其他账号接任管理员".to_string()));
+    }
+    if new_admin.status == "banned" {
+        return Err(AppError::Conflict(
+            "不能将管理员转让给已封禁账号".to_string(),
+        ));
     }
 
     let mut tx = state.pool.begin().await?;

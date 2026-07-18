@@ -76,7 +76,8 @@ pub async fn login(
 ) -> AppResult<(CookieJar, Json<LoginResponse>)> {
     let user = sqlx::query_as::<_, User>(
         r#"
-        SELECT id, student_id, password_hash, role, qq, must_change_password, created_at, last_login_at
+        SELECT id, student_id, password_hash, role, qq, phone, status,
+               must_change_password, created_at, last_login_at
         FROM users
         WHERE student_id = ?
         "#,
@@ -90,14 +91,21 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
-    sqlx::query("UPDATE users SET last_login_at = datetime('now') WHERE id = ?")
+    if user.status == "banned" {
+        return Err(AppError::Conflict("账号已被封禁，请联系管理员".to_string()));
+    }
+
+    sqlx::query(
+        "UPDATE users SET last_login_at = datetime('now'), status = CASE WHEN status = 'unused' THEN 'normal' ELSE status END WHERE id = ?",
+    )
         .bind(user.id)
         .execute(&state.pool)
         .await?;
 
     let user = sqlx::query_as::<_, User>(
         r#"
-        SELECT id, student_id, password_hash, role, qq, must_change_password, created_at, last_login_at
+        SELECT id, student_id, password_hash, role, qq, phone, status,
+               must_change_password, created_at, last_login_at
         FROM users
         WHERE id = ?
         "#,

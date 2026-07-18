@@ -758,6 +758,21 @@ button:disabled {
   background: #fff3df;
 }
 
+.status-pill.user-normal {
+  color: #1d6b3a;
+  background: #e7f7ed;
+}
+
+.status-pill.user-banned {
+  color: #9b1c1c;
+  background: #ffe8e8;
+}
+
+.status-pill.user-unused {
+  color: #5a6578;
+  background: #e9edf3;
+}
+
 .primary-button,
 .ghost-button,
 .file-button,
@@ -924,7 +939,50 @@ a:focus-visible {
 }
 
 .user-table {
-  min-width: 980px;
+  min-width: 1240px;
+}
+
+.user-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 160px 160px auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.user-filter-bar label {
+  display: grid;
+  gap: 7px;
+  color: #344055;
+  font-weight: 700;
+}
+
+.filter-actions {
+  min-height: 40px;
+}
+
+.batch-format-note {
+  color: #526075;
+  line-height: 1.65;
+}
+
+.batch-format-note p {
+  margin: 0 0 8px;
+}
+
+.batch-format-note ul {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.batch-file-button {
+  width: 100%;
+  min-height: 46px;
+  overflow: hidden;
+}
+
+.batch-file-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .loading-state {
@@ -1139,6 +1197,8 @@ a:focus-visible {
   .submit-layout { grid-template-columns: minmax(0, 1fr) 340px; }
   .queue-task-card { grid-template-columns: 1fr; }
   .queue-task-actions { justify-content: flex-start; max-width: none; }
+  .user-filter-bar { grid-template-columns: minmax(220px, 1fr) 1fr 1fr; }
+  .filter-actions { grid-column: 1 / -1; }
 }
 
 @media (max-width: 720px) {
@@ -1172,6 +1232,8 @@ a:focus-visible {
   }
   .page-header > .button-row,
   .queue-toolbar { width: 100%; justify-content: flex-start; }
+  .user-filter-bar { grid-template-columns: 1fr; }
+  .filter-actions { grid-column: auto; }
   .submit-page { height: auto; min-height: calc(100vh - 32px); }
   .submit-layout { grid-template-columns: 1fr; }
   .submit-dropzone { min-height: 320px; }

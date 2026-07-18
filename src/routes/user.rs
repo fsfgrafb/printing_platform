@@ -80,6 +80,7 @@ pub async fn submit_stats(
 #[derive(Debug, Deserialize)]
 pub struct UpdateProfileRequest {
     pub qq: Option<String>,
+    pub phone: Option<String>,
 }
 
 pub async fn update_profile(
@@ -87,13 +88,31 @@ pub async fn update_profile(
     CurrentUser(user): CurrentUser,
     Json(request): Json<UpdateProfileRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    sqlx::query("UPDATE users SET qq = ? WHERE id = ?")
-        .bind(request.qq.as_deref().map(str::trim))
+    let qq = optional_profile_value(request.qq);
+    let phone = optional_profile_value(request.phone);
+    if phone
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 32)
+    {
+        return Err(crate::error::AppError::BadRequest(
+            "手机号不能超过 32 个字符".to_string(),
+        ));
+    }
+
+    sqlx::query("UPDATE users SET qq = ?, phone = ? WHERE id = ?")
+        .bind(qq)
+        .bind(phone)
         .bind(user.id)
         .execute(&state.pool)
         .await?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+fn optional_profile_value(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Serialize)]

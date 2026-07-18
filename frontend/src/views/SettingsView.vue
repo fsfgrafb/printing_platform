@@ -10,6 +10,7 @@ import { refreshSession, session } from '../session'
 const newPassword = ref('')
 const confirmPassword = ref('')
 const qq = ref('')
+const phone = ref('')
 const admin = ref({ student_id: '', qq: '' })
 const loaded = ref(false)
 const profileSaving = ref(false)
@@ -22,6 +23,7 @@ async function load() {
   loaded.value = false
   try {
     qq.value = session.user?.qq || ''
+    phone.value = session.user?.phone || ''
     if (!session.user?.must_change_password) {
       const { data } = await api.get('/user/admin-contact')
       admin.value = data
@@ -67,7 +69,7 @@ async function saveProfile() {
   if (profileSaving.value) return
   profileSaving.value = true
   try {
-    await api.post('/user/profile', { qq: qq.value })
+    await api.post('/user/profile', { qq: qq.value, phone: phone.value })
     await refreshSession()
     showSuccess('个人资料已更新。')
   } catch (err) {
@@ -99,6 +101,18 @@ async function saveProfile() {
       <label>
         我的 QQ
         <input v-model.trim="qq" name="qq_number" autocomplete="off" inputmode="numeric" />
+      </label>
+      <label>
+        我的手机号
+        <input
+          v-model.trim="phone"
+          name="phone_number"
+          type="tel"
+          autocomplete="tel"
+          inputmode="tel"
+          maxlength="32"
+          placeholder="选填"
+        />
       </label>
       <button class="primary-button" type="submit" :disabled="profileSaving">
         <Save :size="18" />

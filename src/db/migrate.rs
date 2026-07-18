@@ -11,6 +11,8 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
             qq TEXT,
+            phone TEXT,
+            status TEXT NOT NULL DEFAULT 'unused',
             must_change_password INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             last_login_at TEXT
@@ -112,6 +114,13 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
     add_column_if_missing(pool, "print_tasks", "status_detail", "TEXT").await?;
     add_column_if_missing(pool, "print_tasks", "submitted_ip", "TEXT").await?;
     add_column_if_missing(pool, "users", "last_login_at", "TEXT").await?;
+    add_column_if_missing(pool, "users", "phone", "TEXT").await?;
+    add_column_if_missing(pool, "users", "status", "TEXT NOT NULL DEFAULT 'unused'").await?;
+    sqlx::query(
+        "UPDATE users SET status = 'normal' WHERE status = 'unused' AND last_login_at IS NOT NULL",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -139,7 +148,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[tokio::test]
-    async fn migration_is_idempotent_and_adds_printer_tracking_columns() {
+    async fn migration_is_idempotent_and_adds_current_columns() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -154,5 +163,60 @@ mod tests {
                 .unwrap();
         assert!(columns.iter().any(|column| column == "windows_job_id"));
         assert!(columns.iter().any(|column| column == "status_detail"));
+
+        let user_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('users')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(user_columns.iter().any(|column| column == "phone"));
+        assert!(user_columns.iter().any(|column| column == "status"));
+    }
+
+    #[tokio::test]
+    async fn migration_preserves_unused_users_and_marks_previous_logins_normal() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                qq TEXT,
+                must_change_password INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_login_at TEXT
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO users (student_id, password_hash, last_login_at) VALUES ('new', 'hash', NULL), ('used', 'hash', datetime('now'))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run(&pool).await.unwrap();
+
+        let statuses: Vec<(String, String)> =
+            sqlx::query_as("SELECT student_id, status FROM users ORDER BY student_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            statuses,
+            vec![
+                ("new".to_string(), "unused".to_string()),
+                ("used".to_string(), "normal".to_string())
+            ]
+        );
     }
 }

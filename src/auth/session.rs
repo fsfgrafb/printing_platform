@@ -65,10 +65,11 @@ pub async fn authenticate(
     let now = Utc::now().to_rfc3339();
     let user = sqlx::query_as::<_, User>(
         r#"
-        SELECT u.id, u.student_id, u.password_hash, u.role, u.qq, u.must_change_password, u.created_at, u.last_login_at
+        SELECT u.id, u.student_id, u.password_hash, u.role, u.qq, u.phone, u.status,
+               u.must_change_password, u.created_at, u.last_login_at
         FROM sessions s
         JOIN users u ON u.id = s.user_id
-        WHERE s.token = ? AND s.expires_at > ?
+        WHERE s.token = ? AND s.expires_at > ? AND u.status != 'banned'
         "#,
     )
     .bind(token)
