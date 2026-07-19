@@ -137,9 +137,17 @@ pub async fn upload(
             match converter::prepare_preview(&state.config, &stored_path, &preview_path).await {
                 Ok(count) => count,
                 Err(error) => {
+                    warn!(
+                        %temp_id,
+                        file_name = %original_name,
+                        error = %error,
+                        "failed to prepare uploaded file preview"
+                    );
                     let _ = fs::remove_file(&stored_path).await;
                     let _ = fs::remove_file(&preview_path).await;
-                    return Err(error);
+                    return Err(AppError::BadRequest(format!(
+                        "无法转换文件“{original_name}”，请确认文件未损坏且 LibreOffice 支持该格式"
+                    )));
                 }
             };
         drop(conversion_slot);

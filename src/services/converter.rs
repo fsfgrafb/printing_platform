@@ -5,10 +5,13 @@ use tokio::{
     time::{timeout, Duration},
 };
 use tracing::info;
+use url::Url;
+use uuid::Uuid;
 
 use crate::{
     config::Config,
     error::{AppError, AppResult},
+    utils,
 };
 
 const SUPPORTED_EXTENSIONS: &[&str] = &[
@@ -92,21 +95,30 @@ async fn run_external_converter(config: &Config, source: &Path, output: &Path) -
         .and_then(Path::to_str)
         .ok_or_else(|| AppError::External("preview directory is not valid UTF-8".to_string()))?;
     let program = converter_program(config);
+    let profile_dir =
+        utils::tmp_dir(config).join(format!("libreoffice-profile-{}", Uuid::new_v4()));
+    fs::create_dir_all(&profile_dir).await?;
+    let canonical_profile_dir = fs::canonicalize(&profile_dir).await?;
+    let profile_url = Url::from_directory_path(&canonical_profile_dir)
+        .map_err(|_| AppError::External("failed to create LibreOffice profile URL".to_string()))?;
     let default_args = [
-        "--headless",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        "{output_dir}",
-        "{input}",
+        "--headless".to_string(),
+        "--nologo".to_string(),
+        "--norestore".to_string(),
+        "--nodefault".to_string(),
+        "--convert-to".to_string(),
+        "pdf".to_string(),
+        "--outdir".to_string(),
+        "{output_dir}".to_string(),
+        "{input}".to_string(),
     ];
-    let arguments: &[String] = &config.converter.office_args;
     let mut command = tokio::process::Command::new(program);
-    let templates: Vec<&str> = if arguments.is_empty() {
+    let templates = if config.converter.office_args.is_empty() {
         default_args.to_vec()
     } else {
-        arguments.iter().map(String::as_str).collect()
+        config.converter.office_args.clone()
     };
+    command.arg(format!("-env:UserInstallation={profile_url}"));
     command.args(
         templates
             .iter()
@@ -117,12 +129,14 @@ async fn run_external_converter(config: &Config, source: &Path, output: &Path) -
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let result = timeout(
+    let command_result = timeout(
         Duration::from_secs(config.converter.command_timeout_seconds.max(5)),
         command.output(),
     )
-    .await
-    .map_err(|_| AppError::External("document converter timed out".to_string()))??;
+    .await;
+    let _ = fs::remove_dir_all(&profile_dir).await;
+    let result = command_result
+        .map_err(|_| AppError::External("document converter timed out".to_string()))??;
 
     if result.status.success() && !output.exists() {
         let generated = output

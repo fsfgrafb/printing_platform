@@ -264,7 +264,9 @@ mod tests {
         assert!(javascript.contains("function printerStatusDisplay"));
         assert!(javascript.contains("modal.classList.add('closing')"));
         assert!(javascript.contains("function updateNavHighlight"));
-        assert!(javascript.contains("files.forEach((file) => data.append('files', file))"));
+        assert!(javascript.contains("files.map(async (file) =>"));
+        assert!(javascript.contains("data.append('files', file)"));
+        assert!(javascript.contains("uploads.push(...addedFiles)"));
         assert!(javascript.contains("无法连接服务器，请检查网络连接或确认程序正在运行"));
     }
 
