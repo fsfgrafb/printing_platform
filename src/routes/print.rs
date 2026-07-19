@@ -440,13 +440,24 @@ pub async fn submit(
         });
     }
 
+    let submitted_pages = prepared
+        .iter()
+        .fold(0_i64, |total, file| total.saturating_add(file.page_count));
+    let requires_review = print_service::submission_requires_review(
+        used_today.saturating_add(reserved),
+        submitted_pages,
+        limit,
+    );
     let client_ip = client_addr.ip().to_string();
     let persist_result: AppResult<Vec<SubmittedTask>> = async {
-        let mut projected_used = used_today + reserved;
         let mut tx = state.pool.begin().await?;
         let mut tasks = Vec::with_capacity(prepared.len());
         for file in &prepared {
-            let (status, over_limit) = print_service::quota_status(&mut projected_used, file.page_count, limit);
+            let status = if requires_review {
+                "pending_review"
+            } else {
+                "queued"
+            };
             let result = sqlx::query(
             r#"
             INSERT INTO print_tasks
@@ -478,7 +489,7 @@ pub async fn submit(
             page_count: file.page_count,
             odd_even: file.odd_even.clone(),
             status: status.to_string(),
-            over_limit,
+            over_limit: requires_review,
         });
         }
         tx.commit().await?;

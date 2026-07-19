@@ -759,6 +759,13 @@ async function renderSubmit() {
         : (Math.min(projected, quota.remaining) / quota.limit) * 100,
   })
 
+  const requiresApproval = (projected) => projected > quota.remaining
+
+  const quotaLegendMarkup = (projected) =>
+    projected
+      ? `<span class="quota-projected-label"><i class="pending-dot"></i>本次打印 ${projected} 页${requiresApproval(projected) ? '<em class="review-required">需审批</em>' : ''}</span>`
+      : ''
+
   const uploadCardMarkup = (file) => {
     const ready = file.status === 'ready'
     const uploading = file.status === 'uploading'
@@ -772,22 +779,26 @@ async function renderSubmit() {
         <button class="icon-button remove-button remove-upload" title="移出" aria-label="移出" type="button" ${uploading ? 'disabled' : ''}>${icon('x')}</button>
       </div>
       ${
-        ready
+        ready || uploading
           ? `<div class="page-range-section">
         <div class="page-range-control" data-selection="${file.odd_even}">
-          <button type="button" data-range="all" class="${file.odd_even === 'all' ? 'active' : ''}">全部页</button>
-          <button type="button" data-range="odd" class="${file.odd_even === 'odd' ? 'active' : ''}">奇数页</button>
-          <button type="button" data-range="even" ${file.page_count < 2 ? 'disabled' : ''} class="${file.odd_even === 'even' ? 'active' : ''}">偶数页</button>
-          <button type="button" data-range="custom" class="${file.odd_even === 'custom' ? 'active' : ''}">自定义</button>
+          <button type="button" data-range="all" class="${file.odd_even === 'all' ? 'active' : ''}" ${uploading ? 'disabled' : ''}>全部页</button>
+          <button type="button" data-range="odd" class="${file.odd_even === 'odd' ? 'active' : ''}" ${uploading ? 'disabled' : ''}>奇数页</button>
+          <button type="button" data-range="even" ${uploading || file.page_count < 2 ? 'disabled' : ''} class="${file.odd_even === 'even' ? 'active' : ''}">偶数页</button>
+          <button type="button" data-range="custom" class="${file.odd_even === 'custom' ? 'active' : ''}" ${uploading ? 'disabled' : ''}>自定义</button>
         </div>
-        <div class="custom-page-editor ${file.odd_even === 'custom' ? 'open' : ''}" aria-hidden="${file.odd_even === 'custom' ? 'false' : 'true'}">
+        ${
+          ready
+            ? `<div class="custom-page-editor ${file.odd_even === 'custom' ? 'open' : ''}" aria-hidden="${file.odd_even === 'custom' ? 'false' : 'true'}">
           <div class="custom-page-editor-inner">
             <input class="custom-page-input" type="text" inputmode="numeric" value="${escapeHtml(file.custom_range)}" placeholder="例如：1-3,5,7" aria-label="自定义打印页码" ${file.odd_even === 'custom' ? '' : 'disabled'} />
             <div class="custom-page-error-wrap ${file.odd_even === 'custom' && parseCustomPageRange(file.custom_range, file.page_count).error ? 'visible' : ''}">
               <p class="custom-page-error" role="alert">${file.odd_even === 'custom' ? escapeHtml(parseCustomPageRange(file.custom_range, file.page_count).error) : ''}</p>
             </div>
           </div>
-        </div>
+        </div>`
+            : ''
+        }
       </div>`
           : ''
       }
@@ -842,19 +853,18 @@ async function renderSubmit() {
     )
     const widths = quotaWidths(projected)
     const quotaCard = document.querySelector('.quota-progress-card')
-    quotaCard?.classList.toggle('danger', projected > quota.remaining)
+    quotaCard?.classList.toggle('danger', requiresApproval(projected))
     const quotaTrack = document.querySelector('.quota-track')
     quotaTrack?.setAttribute('aria-valuetext', `剩余 ${quota.remaining} 页，本次打印 ${projected} 页`)
     const legend = document.querySelector('.quota-legend')
-    if (legend) {
-      legend.innerHTML = projected
-        ? `<span><i class="pending-dot"></i>本次打印 ${projected} 页</span>`
-        : ''
-    }
+    if (legend) legend.innerHTML = quotaLegendMarkup(projected)
     const submitButton = document.querySelector('#submit-files')
     if (submitButton) {
       submitButton.disabled =
         submitting || readyUploads.length === 0 || hasPendingUpload || hasInvalidSelection
+      submitButton.querySelector('span').textContent = requiresApproval(projected)
+        ? '提交审批'
+        : '提交打印'
     }
     if (animate) animateQuotaSegments(widths.green, widths.pending)
     else setQuotaSegments(widths.green, widths.pending)
@@ -1004,6 +1014,9 @@ async function renderSubmit() {
       bindUploadCard(card)
     })
     updateSubmitSummary()
+    requestAnimationFrame(() => {
+      uploadList.scrollTo({ top: uploadList.scrollHeight, behavior: 'smooth' })
+    })
   }
 
   const replaceUploadCard = (file) => {
@@ -1027,7 +1040,7 @@ async function renderSubmit() {
         ${pageHeader(
           '提交打印',
           `访问 ${stats.visit_count} 次 · 累计打印 ${stats.print_total_pages} 页`,
-          `<button id="submit-files" class="primary-button" type="button" ${uploads.some((file) => file.status === 'ready') ? '' : 'disabled'}>${icon('send')}<span>提交打印</span></button>`,
+          `<button id="submit-files" class="primary-button" type="button" ${uploads.some((file) => file.status === 'ready') ? '' : 'disabled'}>${icon('send')}<span>${requiresApproval(projected) ? '提交审批' : '提交打印'}</span></button>`,
         )}
         <div class="submit-layout">
           <label id="dropzone" class="dropzone submit-dropzone">
@@ -1038,7 +1051,7 @@ async function renderSubmit() {
             <input id="file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.bmp,.txt" multiple hidden />
           </label>
           <aside class="submission-sidebar">
-            <div class="quota-progress-card ${projected > quota.remaining ? 'danger' : ''}">
+            <div class="quota-progress-card ${requiresApproval(projected) ? 'danger' : ''}">
               <div class="quota-progress-heading"><span>今日额度</span><strong>${quota.remaining}/${quota.limit} 页</strong></div>
               <svg class="quota-track" viewBox="0 0 100 12" preserveAspectRatio="none" role="progressbar" aria-valuenow="${quota.remaining}" aria-valuemin="0" aria-valuemax="${quota.limit}">
                 <defs>
@@ -1056,7 +1069,7 @@ async function renderSubmit() {
                 <rect class="quota-pending-segment" x="${widths.green}" width="${widths.pending}" height="12" fill="url(#quota-pending-gradient)"></rect>
               </svg>
               <div class="quota-legend">
-                ${projected ? `<span><i class="pending-dot"></i>本次打印 ${projected} 页</span>` : ''}
+                ${quotaLegendMarkup(projected)}
               </div>
             </div>
             <div class="upload-list">
@@ -1092,6 +1105,7 @@ async function renderSubmit() {
     document.querySelectorAll('.upload-card').forEach(bindUploadCard)
     document.querySelector('#submit-files').addEventListener('click', async () => {
       const button = document.querySelector('#submit-files')
+      const approvalRequired = requiresApproval(projectedPages())
       submitting = true
       button.disabled = true
       try {
@@ -1107,7 +1121,12 @@ async function renderSubmit() {
               })),
           },
         })
-        notify(`已提交 ${result.tasks.length} 个任务`, 'success')
+        notify(
+          approvalRequired
+            ? `已提交 ${result.tasks.length} 个审批任务，请等待管理员审核`
+            : `已提交 ${result.tasks.length} 个任务`,
+          'success',
+        )
         location.hash = '#/queue'
       } catch (error) {
         notify(error.message, 'error')

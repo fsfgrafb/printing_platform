@@ -271,6 +271,9 @@ mod tests {
         assert!(javascript.contains("data.append('files', pendingUpload.source_file)"));
         assert!(javascript.contains("status: 'ready'"));
         assert!(javascript.contains("replaceUploadCard(pendingUpload)"));
+        assert!(javascript.contains("'提交审批'"));
+        assert!(javascript.contains("class=\"review-required\">需审批"));
+        assert!(javascript.contains("uploadList.scrollTo({ top: uploadList.scrollHeight"));
         assert!(javascript.contains("无法连接服务器，请检查网络连接或确认程序正在运行"));
     }
 

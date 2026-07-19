@@ -428,6 +428,21 @@ button:disabled {
   gap: 6px;
 }
 
+.quota-projected-label {
+  width: 100%;
+}
+
+.review-required {
+  margin-left: auto;
+  padding: 2px 7px;
+  color: #9a4d00;
+  border-radius: 999px;
+  background: #ffdf9e;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+}
+
 .quota-legend i {
   width: 8px;
   height: 8px;
@@ -487,6 +502,10 @@ button:disabled {
 .upload-card.upload-uploading {
   border-color: #cddded;
   background: #fbfdff;
+}
+
+.upload-card.upload-uploading .page-range-control {
+  opacity: 0.72;
 }
 
 .upload-card.upload-failed {

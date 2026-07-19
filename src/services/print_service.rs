@@ -60,13 +60,8 @@ pub async fn apply_page_selection(pdf_path: &Path, odd_even: &str) -> AppResult<
         .map_err(|error| AppError::External(format!("page selection task failed: {error}")))?
 }
 
-pub fn quota_status(projected_used: &mut i64, page_count: i64, limit: i64) -> (&'static str, bool) {
-    if *projected_used + page_count > limit {
-        ("pending_review", true)
-    } else {
-        *projected_used += page_count;
-        ("queued", false)
-    }
+pub fn submission_requires_review(current_usage: i64, submitted_pages: i64, limit: i64) -> bool {
+    i128::from(current_usage) + i128::from(submitted_pages) > i128::from(limit)
 }
 
 fn write_selected_pages(pdf_path: &Path, odd_even: &str) -> AppResult<()> {
@@ -254,7 +249,10 @@ pub async fn load_task(pool: &SqlitePool, task_id: i64) -> AppResult<PrintTask> 
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_custom_page_range, pages_to_delete, quota_status, selected_page_count};
+    use super::{
+        normalize_custom_page_range, pages_to_delete, selected_page_count,
+        submission_requires_review,
+    };
 
     #[test]
     fn selected_page_count_handles_page_ranges() {
@@ -290,33 +288,15 @@ mod tests {
     }
 
     #[test]
-    fn quota_status_accumulates_queued_pages_in_one_submission() {
-        let mut projected_used = 40;
-
-        assert_eq!(quota_status(&mut projected_used, 5, 50), ("queued", false));
-        assert_eq!(projected_used, 45);
-
-        assert_eq!(quota_status(&mut projected_used, 5, 50), ("queued", false));
-        assert_eq!(projected_used, 50);
-
-        assert_eq!(
-            quota_status(&mut projected_used, 1, 50),
-            ("pending_review", true)
-        );
-        assert_eq!(projected_used, 50);
+    fn submission_at_or_below_remaining_quota_does_not_require_review() {
+        assert!(!submission_requires_review(40, 10, 50));
+        assert!(!submission_requires_review(0, 50, 50));
     }
 
     #[test]
-    fn quota_status_keeps_remaining_capacity_after_review_task() {
-        let mut projected_used = 45;
-
-        assert_eq!(
-            quota_status(&mut projected_used, 10, 50),
-            ("pending_review", true)
-        );
-        assert_eq!(projected_used, 45);
-
-        assert_eq!(quota_status(&mut projected_used, 3, 50), ("queued", false));
-        assert_eq!(projected_used, 48);
+    fn submission_over_quota_requires_review_for_the_whole_batch() {
+        assert!(submission_requires_review(40, 11, 50));
+        assert!(submission_requires_review(50, 1, 50));
+        assert!(submission_requires_review(i64::MAX, 1, i64::MAX));
     }
 }
