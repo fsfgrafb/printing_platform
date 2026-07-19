@@ -274,6 +274,8 @@ mod tests {
         assert!(javascript.contains("'提交审批'"));
         assert!(javascript.contains("class=\"review-required\">需审批"));
         assert!(javascript.contains("uploadList.scrollTo({ top: uploadList.scrollHeight"));
+        assert!(javascript.contains("api('/admin/review-alerts')"));
+        assert!(javascript.contains("跨账号拆页提醒"));
         assert!(javascript.contains("无法连接服务器，请检查网络连接或确认程序正在运行"));
     }
 

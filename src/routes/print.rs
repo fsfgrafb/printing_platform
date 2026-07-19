@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::{fs, io::AsyncWriteExt};
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
@@ -43,7 +44,7 @@ pub async fn list_uploads(
 ) -> AppResult<Json<UploadResponse>> {
     let uploads = sqlx::query_as::<_, TempUpload>(
         r#"
-        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, created_at
+        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, content_hash, created_at
         FROM temp_uploads
         WHERE user_id = ?
         ORDER BY created_at ASC, id ASC
@@ -110,6 +111,7 @@ pub async fn upload(
         info!(%temp_id, file_name = %original_name, "receiving uploaded file");
         let mut output = fs::File::create(&stored_path).await?;
         let mut byte_size = 0_u64;
+        let mut content_hasher = Sha256::new();
         while let Some(chunk) = field.chunk().await? {
             byte_size = byte_size.saturating_add(chunk.len() as u64);
             if byte_size > state.config.limits.max_upload_bytes
@@ -122,10 +124,12 @@ pub async fn upload(
                     "文件过大或当前用户的临时文件空间已满".into(),
                 ));
             }
+            content_hasher.update(&chunk);
             output.write_all(&chunk).await?;
         }
         output.flush().await?;
         drop(output);
+        let content_hash = format!("{:x}", content_hasher.finalize());
         info!(%temp_id, path = %stored_path.display(), "uploaded file saved");
 
         let conversion_slot = state
@@ -162,8 +166,8 @@ pub async fn upload(
         info!(%temp_id, page_count, preview = %preview_path.display(), "preview ready");
         sqlx::query(
             r#"
-            INSERT INTO temp_uploads (temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO temp_uploads (temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, content_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&temp_id)
@@ -173,6 +177,7 @@ pub async fn upload(
         .bind(preview_path.to_string_lossy().to_string())
         .bind(page_count)
         .bind(i64::try_from(byte_size).unwrap_or(i64::MAX))
+        .bind(content_hash)
         .execute(&state.pool)
         .await?;
         user_bytes = user_bytes.saturating_add(byte_size);
@@ -195,7 +200,7 @@ pub async fn preview(
 ) -> AppResult<Response> {
     let upload = sqlx::query_as::<_, TempUpload>(
         r#"
-        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, created_at
+        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, content_hash, created_at
         FROM temp_uploads
         WHERE temp_id = ?
         "#,
@@ -267,7 +272,7 @@ pub async fn remove_upload(
 ) -> AppResult<Json<serde_json::Value>> {
     let upload = sqlx::query_as::<_, TempUpload>(
         r#"
-        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, created_at
+        SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, content_hash, created_at
         FROM temp_uploads
         WHERE temp_id = ?
         "#,
@@ -373,7 +378,7 @@ pub async fn submit(
     for file in request.files {
         let upload_result = sqlx::query_as::<_, TempUpload>(
             r#"
-            SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, created_at
+            SELECT id, temp_id, user_id, original_name, stored_path, preview_path, page_count, byte_size, content_hash, created_at
             FROM temp_uploads
             WHERE temp_id = ?
             "#,
@@ -459,42 +464,46 @@ pub async fn submit(
                 "queued"
             };
             let result = sqlx::query(
-            r#"
+                r#"
             INSERT INTO print_tasks
-                (user_id, file_name, stored_path, preview_path, page_count, odd_even, status, submitted_ip, queued_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'queued' THEN datetime('now') END)
+                (user_id, file_name, stored_path, preview_path, page_count, source_page_count,
+                 content_hash, odd_even, status, submitted_ip, queued_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'queued' THEN datetime('now') END)
             "#,
-        )
-        .bind(user.id)
-        .bind(&file.upload.original_name)
-        .bind(&file.upload.stored_path)
-        .bind(file.task_preview_path.to_string_lossy().to_string())
-        .bind(file.page_count)
-        .bind(&file.odd_even)
-        .bind(status)
-        .bind(&client_ip)
-        .bind(status)
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query("DELETE FROM temp_uploads WHERE id = ?")
-            .bind(file.upload.id)
+            )
+            .bind(user.id)
+            .bind(&file.upload.original_name)
+            .bind(&file.upload.stored_path)
+            .bind(file.task_preview_path.to_string_lossy().to_string())
+            .bind(file.page_count)
+            .bind(file.upload.page_count)
+            .bind(&file.upload.content_hash)
+            .bind(&file.odd_even)
+            .bind(status)
+            .bind(&client_ip)
+            .bind(status)
             .execute(&mut *tx)
             .await?;
 
-        let id = result.last_insert_rowid();
-        tasks.push(SubmittedTask {
-            id,
-            file_name: file.upload.original_name.clone(),
-            page_count: file.page_count,
-            odd_even: file.odd_even.clone(),
-            status: status.to_string(),
-            over_limit: requires_review,
-        });
+            sqlx::query("DELETE FROM temp_uploads WHERE id = ?")
+                .bind(file.upload.id)
+                .execute(&mut *tx)
+                .await?;
+
+            let id = result.last_insert_rowid();
+            tasks.push(SubmittedTask {
+                id,
+                file_name: file.upload.original_name.clone(),
+                page_count: file.page_count,
+                odd_even: file.odd_even.clone(),
+                status: status.to_string(),
+                over_limit: requires_review,
+            });
         }
         tx.commit().await?;
         Ok(tasks)
-    }.await;
+    }
+    .await;
 
     let tasks = match persist_result {
         Ok(tasks) => tasks,

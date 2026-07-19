@@ -38,6 +38,7 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
             preview_path TEXT NOT NULL,
             page_count INTEGER NOT NULL DEFAULT 1,
             byte_size INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
@@ -50,6 +51,8 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
             stored_path TEXT NOT NULL,
             preview_path TEXT,
             page_count INTEGER NOT NULL DEFAULT 0,
+            source_page_count INTEGER,
+            content_hash TEXT,
             odd_even TEXT NOT NULL DEFAULT 'all',
             status TEXT NOT NULL DEFAULT 'queued',
             submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -109,11 +112,24 @@ pub async fn run(pool: &SqlitePool) -> AppResult<()> {
     add_column_if_missing(pool, "print_tasks", "queued_at", "TEXT").await?;
     add_column_if_missing(pool, "print_tasks", "reviewed_at", "TEXT").await?;
     add_column_if_missing(pool, "print_tasks", "reviewed_by", "INTEGER").await?;
+    add_column_if_missing(pool, "print_tasks", "source_page_count", "INTEGER").await?;
+    add_column_if_missing(pool, "print_tasks", "content_hash", "TEXT").await?;
     add_column_if_missing(
         pool,
         "temp_uploads",
         "byte_size",
         "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    add_column_if_missing(
+        pool,
+        "temp_uploads",
+        "content_hash",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    .await?;
+    pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_content_hash_submitted ON print_tasks(content_hash, submitted_at)",
     )
     .await?;
     add_column_if_missing(pool, "users", "last_login_at", "TEXT").await?;
@@ -172,6 +188,8 @@ mod tests {
                 .unwrap();
         assert!(columns.iter().any(|column| column == "windows_job_id"));
         assert!(columns.iter().any(|column| column == "status_detail"));
+        assert!(columns.iter().any(|column| column == "source_page_count"));
+        assert!(columns.iter().any(|column| column == "content_hash"));
 
         let user_columns: Vec<String> =
             sqlx::query_scalar("SELECT name FROM pragma_table_info('users')")
@@ -180,6 +198,13 @@ mod tests {
                 .unwrap();
         assert!(user_columns.iter().any(|column| column == "phone"));
         assert!(user_columns.iter().any(|column| column == "status"));
+
+        let upload_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('temp_uploads')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(upload_columns.iter().any(|column| column == "content_hash"));
     }
 
     #[tokio::test]

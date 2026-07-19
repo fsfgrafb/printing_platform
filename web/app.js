@@ -534,6 +534,36 @@ function updateNavHighlight(route = routeName()) {
   })
 }
 
+function updateReviewRiskBadge(count) {
+  const link = document.querySelector('.nav-link[href="#/review"]')
+  if (!link) return
+  let badge = link.querySelector('.review-risk-nav-badge')
+  if (count <= 0) {
+    badge?.remove()
+    return
+  }
+  if (!badge) {
+    badge = document.createElement('span')
+    badge.className = 'nav-badge review-risk-nav-badge'
+    badge.title = '跨账号拆页风险提醒'
+    link.append(badge)
+  }
+  badge.textContent = count > 99 ? '99+' : String(count)
+}
+
+async function refreshReviewRiskBadge() {
+  if (state.user?.role !== 'admin' || state.user.must_change_password) return
+  const alerts = await api('/admin/review-alerts')
+  updateReviewRiskBadge(alerts.length)
+}
+
+function startReviewRiskUpdates(refreshNow = true) {
+  if (state.user?.role !== 'admin' || state.user.must_change_password) return
+  if (refreshNow) refreshReviewRiskBadge().catch(() => {})
+  const timer = setInterval(() => refreshReviewRiskBadge().catch(() => {}), 60000)
+  state.cleanup.push(() => clearInterval(timer))
+}
+
 function animateRouteLeave(view) {
   return new Promise((resolve) => {
     let finished = false
@@ -600,6 +630,7 @@ async function renderRoute({ animate = false } = {}) {
       review: renderReview,
       system: renderSystem,
     }[route]()
+    startReviewRiskUpdates(route !== 'review')
   } catch (error) {
     const view = document.querySelector('#view')
     if (view) view.innerHTML = '<section class="page page-loading-shell"></section>'
@@ -1360,6 +1391,7 @@ function startQueueUpdates() {
       clearTimeout(debounce)
       debounce = setTimeout(() => {
         if (routeName() === 'queue') renderQueue(true).catch(() => {})
+        refreshReviewRiskBadge().catch(() => {})
       }, 250)
     })
   } catch {}
@@ -1559,10 +1591,44 @@ async function renderUsers() {
 }
 
 async function renderReview() {
-  const tasks = await api('/admin/review')
+  const [tasks, riskAlerts] = await Promise.all([
+    api('/admin/review'),
+    api('/admin/review-alerts'),
+  ])
+  updateReviewRiskBadge(riskAlerts.length)
   document.querySelector('#view').innerHTML = `
-    <section class="page review-page reveal-page">
-      ${pageHeader('审核中心', `${tasks.length} 个待审核任务`)}
+    <section class="page review-page ${riskAlerts.length ? 'has-risk-alerts' : ''} reveal-page">
+      ${pageHeader(
+        '审核中心',
+        `${tasks.length} 个待审核任务${riskAlerts.length ? ` · ${riskAlerts.length} 个风险提醒` : ''}`,
+      )}
+      ${
+        riskAlerts.length
+          ? `<section class="review-risk-list" aria-label="跨账号拆页风险提醒">
+              <header><strong>跨账号拆页提醒</strong><span>请核实是否存在通过多个账号规避每日限额的情况</span></header>
+              ${riskAlerts
+                .map(
+                  (alert) => `<article class="review-risk-alert">
+                    <div class="review-risk-heading">
+                      <span class="status-pill review-risk-pill">需关注</span>
+                      <strong title="${escapeHtml(alert.file_name)}">${escapeHtml(alert.file_name)}</strong>
+                      <span>原文件 ${alert.total_pages} 页</span>
+                    </div>
+                    <p>检测到 ${alert.users.length} 个账号打印同一文件，所选页码互不重叠：</p>
+                    <ul>
+                      ${alert.users
+                        .map(
+                          (riskUser) =>
+                            `<li><strong>${escapeHtml(riskUser.student_id)}</strong><span>第 ${escapeHtml(riskUser.pages)} 页 · 任务 ${riskUser.task_ids.map((id) => `#${id}`).join('、')}</span></li>`,
+                        )
+                        .join('')}
+                    </ul>
+                  </article>`,
+                )
+                .join('')}
+            </section>`
+          : ''
+      }
       <div class="review-list ${tasks.length ? '' : 'empty'}">
         ${
           tasks

@@ -41,6 +41,29 @@ pub fn selected_page_count(total: i64, odd_even: &str) -> AppResult<i64> {
     }
 }
 
+pub fn selected_page_numbers(total: i64, odd_even: &str) -> AppResult<BTreeSet<u32>> {
+    let total = u32::try_from(total.max(1))
+        .map_err(|_| AppError::BadRequest("文件页数超出支持范围".to_string()))?;
+    let pages = match odd_even {
+        "all" => (1..=total).collect(),
+        "odd" => (1..=total).filter(|page| page % 2 == 1).collect(),
+        "even" => (1..=total).filter(|page| page % 2 == 0).collect(),
+        selection if selection.starts_with("custom:") => {
+            parse_custom_pages(total, &selection["custom:".len()..])?
+        }
+        _ => {
+            return Err(AppError::BadRequest(
+                "页码范围必须是全部页、奇数页、偶数页或自定义页码".to_string(),
+            ))
+        }
+    };
+    Ok(pages)
+}
+
+pub fn format_selected_pages(pages: &BTreeSet<u32>) -> String {
+    format_page_ranges(pages)
+}
+
 pub fn normalize_custom_page_range(total: i64, input: &str) -> AppResult<String> {
     let total = u32::try_from(total.max(1))
         .map_err(|_| AppError::BadRequest("文件页数超出支持范围".to_string()))?;
@@ -250,8 +273,8 @@ pub async fn load_task(pool: &SqlitePool, task_id: i64) -> AppResult<PrintTask> 
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_custom_page_range, pages_to_delete, selected_page_count,
-        submission_requires_review,
+        format_selected_pages, normalize_custom_page_range, pages_to_delete, selected_page_count,
+        selected_page_numbers, submission_requires_review,
     };
 
     #[test]
@@ -262,6 +285,15 @@ mod tests {
         assert_eq!(selected_page_count(8, "custom:1-3,5，7、8").unwrap(), 6);
         assert!(selected_page_count(1, "even").is_err());
         assert!(selected_page_count(5, "invalid").is_err());
+    }
+
+    #[test]
+    fn selected_page_numbers_expand_and_format_normalized_selections() {
+        let pages = selected_page_numbers(8, "custom:1-3,5,7-8").unwrap();
+        assert_eq!(format_selected_pages(&pages), "1-3,5,7-8");
+        assert!(selected_page_numbers(8, "odd")
+            .unwrap()
+            .is_disjoint(&selected_page_numbers(8, "even").unwrap()));
     }
 
     #[test]

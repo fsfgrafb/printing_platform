@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use axum::{
     extract::{Multipart, Path, Query, State},
@@ -17,7 +20,7 @@ use crate::{
     db::models::{PrintTask, User, UserView},
     error::{AppError, AppResult},
     routes::queue,
-    services::{audit, import, print_service, printer, settings},
+    services::{audit, import, print_service, printer, quota, settings},
     utils,
     ws::QueueEvent,
 };
@@ -33,6 +36,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/queue/resume", post(resume_queue))
         .route("/admin/tasks/:task_id", delete(cancel_task))
         .route("/admin/review", get(review_tasks))
+        .route("/admin/review-alerts", get(review_risk_alerts))
         .route("/admin/review/:task_id/approve", post(approve_review))
         .route("/admin/review/:task_id/reject", post(reject_review))
         .route("/admin/stats", get(stats))
@@ -561,6 +565,122 @@ pub async fn review_tasks(
     ))
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ReviewRiskRow {
+    id: i64,
+    user_id: i64,
+    student_id: String,
+    file_name: String,
+    content_hash: String,
+    source_page_count: i64,
+    odd_even: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewRiskUser {
+    pub student_id: String,
+    pub pages: String,
+    pub task_ids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewRiskAlert {
+    pub file_name: String,
+    pub total_pages: i64,
+    pub users: Vec<ReviewRiskUser>,
+}
+
+struct ReviewRiskUserBuilder {
+    student_id: String,
+    pages: BTreeSet<u32>,
+    task_ids: Vec<i64>,
+}
+
+pub async fn review_risk_alerts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<Vec<ReviewRiskAlert>>> {
+    ensure_admin(&user)?;
+    let limit = quota::daily_limit(&state.pool).await?;
+    let rows = sqlx::query_as::<_, ReviewRiskRow>(
+        r#"
+        SELECT t.id, t.user_id, u.student_id, t.file_name, t.content_hash,
+               t.source_page_count, t.odd_even
+        FROM print_tasks t
+        JOIN users u ON u.id = t.user_id
+        WHERE t.content_hash IS NOT NULL
+          AND t.content_hash != ''
+          AND t.source_page_count > ?
+          AND t.status != 'cancelled'
+          AND date(t.submitted_at, 'localtime') = date('now', 'localtime')
+        ORDER BY t.content_hash, t.source_page_count, t.user_id, t.id
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(build_review_risk_alerts(rows)))
+}
+
+fn build_review_risk_alerts(rows: Vec<ReviewRiskRow>) -> Vec<ReviewRiskAlert> {
+    let mut file_groups: BTreeMap<(String, i64), Vec<ReviewRiskRow>> = BTreeMap::new();
+    for row in rows {
+        file_groups
+            .entry((row.content_hash.clone(), row.source_page_count))
+            .or_default()
+            .push(row);
+    }
+
+    file_groups
+        .into_values()
+        .filter_map(|rows| {
+            let total_pages = rows.first()?.source_page_count;
+            let file_name = rows.first()?.file_name.clone();
+            let mut users: BTreeMap<i64, ReviewRiskUserBuilder> = BTreeMap::new();
+            for row in rows {
+                let Ok(pages) = print_service::selected_page_numbers(total_pages, &row.odd_even)
+                else {
+                    continue;
+                };
+                let user = users
+                    .entry(row.user_id)
+                    .or_insert_with(|| ReviewRiskUserBuilder {
+                        student_id: row.student_id,
+                        pages: BTreeSet::new(),
+                        task_ids: Vec::new(),
+                    });
+                user.pages.extend(pages);
+                user.task_ids.push(row.id);
+            }
+            if users.len() < 2 {
+                return None;
+            }
+
+            let mut claimed_pages = BTreeSet::new();
+            for user in users.values() {
+                if !claimed_pages.is_disjoint(&user.pages) {
+                    return None;
+                }
+                claimed_pages.extend(user.pages.iter().copied());
+            }
+
+            Some(ReviewRiskAlert {
+                file_name,
+                total_pages,
+                users: users
+                    .into_values()
+                    .map(|user| ReviewRiskUser {
+                        student_id: user.student_id,
+                        pages: print_service::format_selected_pages(&user.pages),
+                        task_ids: user.task_ids,
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
 pub async fn approve_review(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -879,7 +999,7 @@ mod tests {
     use axum::extract::{Path, State};
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use super::delete_user;
+    use super::{build_review_risk_alerts, delete_user, ReviewRiskRow};
     use crate::{
         app::AppState,
         auth::middleware::CurrentUser,
@@ -887,6 +1007,52 @@ mod tests {
         db::{migrate, models::User},
         error::AppError,
     };
+
+    fn risk_row(
+        id: i64,
+        user_id: i64,
+        student_id: &str,
+        hash: &str,
+        selection: &str,
+    ) -> ReviewRiskRow {
+        ReviewRiskRow {
+            id,
+            user_id,
+            student_id: student_id.to_string(),
+            file_name: "shared.pdf".to_string(),
+            content_hash: hash.to_string(),
+            source_page_count: 100,
+            odd_even: selection.to_string(),
+        }
+    }
+
+    #[test]
+    fn review_risk_detects_disjoint_page_splits_between_users() {
+        let alerts = build_review_risk_alerts(vec![
+            risk_row(1, 10, "20260001", "same", "custom:1-50"),
+            risk_row(2, 11, "20260002", "same", "custom:51-100"),
+        ]);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].total_pages, 100);
+        assert_eq!(alerts[0].users.len(), 2);
+        assert_eq!(alerts[0].users[0].pages, "1-50");
+        assert_eq!(alerts[0].users[1].pages, "51-100");
+    }
+
+    #[test]
+    fn review_risk_ignores_overlapping_or_different_files() {
+        assert!(build_review_risk_alerts(vec![
+            risk_row(1, 10, "20260001", "same", "custom:1-60"),
+            risk_row(2, 11, "20260002", "same", "custom:50-100"),
+        ])
+        .is_empty());
+        assert!(build_review_risk_alerts(vec![
+            risk_row(1, 10, "20260001", "first", "custom:1-50"),
+            risk_row(2, 11, "20260002", "second", "custom:51-100"),
+        ])
+        .is_empty());
+    }
 
     #[tokio::test]
     async fn delete_user_preserves_uncertain_print_evidence() {
